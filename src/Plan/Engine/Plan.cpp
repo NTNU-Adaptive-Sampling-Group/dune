@@ -1,5 +1,5 @@
 //***************************************************************************
-// Copyright 2007-2021 Universidade do Porto - Faculdade de Engenharia      *
+// Copyright 2007-2016 Universidade do Porto - Faculdade de Engenharia      *
 // Laboratório de Sistemas e Tecnologia Subaquática (LSTS)                  *
 //***************************************************************************
 // This file is part of DUNE: Unified Navigation Environment.               *
@@ -8,20 +8,18 @@
 // Licencees holding valid commercial DUNE licences may use this file in    *
 // accordance with the commercial licence agreement provided with the       *
 // Software or, alternatively, in accordance with the terms contained in a  *
-// written agreement between you and Faculdade de Engenharia da             *
-// Universidade do Porto. For licensing terms, conditions, and further      *
-// information contact lsts@fe.up.pt.                                       *
+// written agreement between you and Universidade do Porto. For licensing   *
+// terms, conditions, and further information contact lsts@fe.up.pt.        *
 //                                                                          *
-// Modified European Union Public Licence - EUPL v.1.1 Usage                *
-// Alternatively, this file may be used under the terms of the Modified     *
-// EUPL, Version 1.1 only (the "Licence"), appearing in the file LICENCE.md *
+// European Union Public Licence - EUPL v.1.1 Usage                         *
+// Alternatively, this file may be used under the terms of the EUPL,        *
+// Version 1.1 only (the "Licence"), appearing in the file LICENCE.md       *
 // included in the packaging of this file. You may not use this work        *
 // except in compliance with the Licence. Unless required by applicable     *
 // law or agreed to in writing, software distributed under the Licence is   *
 // distributed on an "AS IS" basis, WITHOUT WARRANTIES OR CONDITIONS OF     *
 // ANY KIND, either express or implied. See the Licence for the specific    *
 // language governing permissions and limitations at                        *
-// https://github.com/LSTS/dune/blob/master/LICENCE.md and                  *
 // http://ec.europa.eu/idabc/eupl.html.                                     *
 //***************************************************************************
 // Author: Pedro Calado                                                     *
@@ -41,20 +39,20 @@ namespace Plan
                bool fpredict, float max_depth, Tasks::Task* task,
                uint16_t min_cal_time, Parsers::Config* cfg):
       m_spec(spec),
-      m_curr_node(NULL),
+      m_curr_node(nullptr),
       m_compute_progress(compute_progress),
       m_max_depth(max_depth),
       m_predict_fuel(fpredict),
       m_progress(0.0),
       m_est_cal_time(0),
-      m_profiles(NULL),
+      m_profiles(nullptr),
       m_beyond_dur(false),
-      m_sched(NULL),
+      m_sched(nullptr),
       m_started_maneuver(false),
-      m_calib(NULL),
+      m_calib(nullptr),
       m_min_cal_time(min_cal_time),
       m_config(cfg),
-      m_fpred(NULL),
+      m_fpred(nullptr),
       m_task(task),
       m_properties(0)
     {
@@ -85,7 +83,7 @@ namespace Plan
       m_rt_stat = new RunTimeStatistics(&m_post_stat);
     }
 
-    Plan::~Plan(void)
+    Plan::~Plan()
     {
       Memory::clear(m_profiles);
       Memory::clear(m_sched);
@@ -97,22 +95,22 @@ namespace Plan
     }
 
     void
-    Plan::clear(void)
+    Plan::clear()
     {
       // Do not clear m_spec
 
       m_graph.clear();
-      m_curr_node = NULL;
+      m_curr_node = nullptr;
       m_seq_nodes.clear();
       m_progress = -1.0;
       m_beyond_dur = false;
       m_started_maneuver = false;
       m_est_cal_time = m_min_cal_time;
 
-      if (m_profiles != NULL)
+      if (m_profiles != nullptr)
         m_profiles->clear();
 
-      if (m_calib != NULL)
+      if (m_calib != nullptr)
         m_calib->clear();
 
       m_cat.clear();
@@ -123,14 +121,14 @@ namespace Plan
     Plan::parse(const std::set<uint16_t>* supported_maneuvers,
                 const std::map<std::string, IMC::EntityInfo>& cinfo,
                 IMC::PlanStatistics& ps, bool imu_enabled,
-                const IMC::EstimatedState* state)
+                const IMC::EstimatedState* state, bool calibrate)
     {
       clear();
 
       // Build Graph of maneuvers and transitions, if this fails, parse fails
       buildGraph(supported_maneuvers);
 
-      secondaryParse(cinfo, ps, imu_enabled, state);
+      secondaryParse(cinfo, ps, imu_enabled, state, calibrate);
 
       m_last_id = m_spec->start_man_id;
 
@@ -138,16 +136,16 @@ namespace Plan
     }
 
     void
-    Plan::planStarted(void)
+    Plan::planStarted()
     {
       // Post statistics
-      if (m_rt_stat != NULL)
+      if (m_rt_stat != nullptr)
         m_rt_stat->clear();
 
       m_post_stat.plan_id = m_spec->plan_id;
       m_rt_stat->planStarted();
 
-      if (m_sched == NULL)
+      if (m_sched == nullptr)
         return;
 
       m_affected_ents.clear();
@@ -156,13 +154,13 @@ namespace Plan
     }
 
     void
-    Plan::planStopped(void)
+    Plan::planStopped()
     {
-      if (m_sched != NULL)
+      if (m_sched != nullptr)
         m_sched->planStopped(m_affected_ents);
 
       if (m_predict_fuel)
-        if (m_fpred != NULL)
+        if (m_fpred != nullptr)
           m_rt_stat->fill(*m_fpred);
 
       m_rt_stat->planStopped();
@@ -170,7 +168,7 @@ namespace Plan
     }
 
     void
-    Plan::calibrationStarted(void)
+    Plan::calibrationStarted()
     {
       m_calib->setTime(m_est_cal_time);
     }
@@ -182,19 +180,19 @@ namespace Plan
 
       m_rt_stat->maneuverStarted(id);
 
-      if (m_sched == NULL)
+      if (m_sched == nullptr)
         return;
 
       m_sched->maneuverStarted(id);
     }
 
     void
-    Plan::maneuverDone(void)
+    Plan::maneuverDone()
     {
       if (!m_started_maneuver)
         return;
 
-      if (m_curr_node == NULL)
+      if (m_curr_node == nullptr)
         return;
 
       m_rt_stat->maneuverStopped();
@@ -207,24 +205,24 @@ namespace Plan
           m_beyond_dur = true;
       }
 
-      if (m_sched == NULL)
+      if (m_sched == nullptr)
         return;
 
       m_sched->maneuverDone(m_last_id);
     }
 
     uint16_t
-    Plan::getEstimatedCalibrationTime(void) const
+    Plan::getEstimatedCalibrationTime() const
     {
       return m_est_cal_time;
     }
 
     bool
-    Plan::isDone(void) const
+    Plan::isDone() const
     {
       // FIXME: we are only fetching a single transition and not all of them
 
-      if (m_curr_node == NULL)
+      if (m_curr_node == nullptr)
         return false;
       else if (!m_curr_node->trans.size())
         return true;
@@ -235,7 +233,7 @@ namespace Plan
     }
 
     IMC::PlanManeuver*
-    Plan::loadStartManeuver(void)
+    Plan::loadStartManeuver()
     {
       m_last_id = m_spec->start_man_id;
 
@@ -243,7 +241,7 @@ namespace Plan
     }
 
     IMC::PlanManeuver*
-    Plan::loadNextManeuver(void)
+    Plan::loadNextManeuver()
     {
       m_last_id = m_curr_node->trans[0]->dest_man;
 
@@ -255,7 +253,7 @@ namespace Plan
     {
       float prog = progress(mcs);
 
-      if (prog >= 0.0 && m_sched != NULL)
+      if (prog >= 0.0 && m_sched != nullptr)
       {
         if (!m_beyond_dur)
           m_sched->updateSchedule(getETA());
@@ -301,7 +299,7 @@ namespace Plan
     bool
     Plan::onEntityActivationState(const std::string& id, const IMC::EntityActivationState* msg)
     {
-      if (m_sched != NULL)
+      if (m_sched != nullptr)
         return m_sched->onEntityActivationState(id, msg);
       else
         return true;
@@ -313,14 +311,14 @@ namespace Plan
       if (!m_predict_fuel)
         return;
 
-      if (m_fpred == NULL)
+      if (m_fpred == nullptr)
         return;
 
       m_fpred->onFuelLevel(msg);
     }
 
     float
-    Plan::getETA(void) const
+    Plan::getETA() const
     {
       if (m_progress >= 0.0)
         return getTotalDuration() * (1.0 - 0.01 * m_progress);
@@ -331,7 +329,7 @@ namespace Plan
     // Private
 
     float
-    Plan::getExecutionDuration(void) const
+    Plan::getExecutionDuration() const
     {
       if (!isLinear() || !m_profiles->size())
         return -1.0;
@@ -349,18 +347,18 @@ namespace Plan
     }
 
     bool
-    Plan::waitingForDevice(void)
+    Plan::waitingForDevice()
     {
-      if (m_sched != NULL)
+      if (m_sched != nullptr)
         return m_sched->waitingForDevice();
 
       return false;
     }
 
     float
-    Plan::scheduledTimeLeft(void) const
+    Plan::scheduledTimeLeft() const
     {
-      if (m_sched != NULL)
+      if (m_sched != nullptr)
         return m_sched->calibTimeLeft();
 
       return -1.0;
@@ -392,7 +390,7 @@ namespace Plan
       // parse maneuvers and transitions
       do
       {
-        if (*mitr == NULL)
+        if (*mitr == nullptr)
         {
           ++mitr;
           continue;
@@ -422,7 +420,7 @@ namespace Plan
 
         for (; tritr != m_spec->transitions.end(); ++tritr)
         {
-          if (*tritr == NULL)
+          if (*tritr == nullptr)
             continue;
 
           if ((*tritr)->dest_man == (*mitr)->maneuver_id)
@@ -452,7 +450,7 @@ namespace Plan
     void
     Plan::secondaryParse(const std::map<std::string, IMC::EntityInfo>& cinfo,
                          IMC::PlanStatistics& ps, bool imu_enabled,
-                         const IMC::EstimatedState* state)
+                         const IMC::EstimatedState* state, bool calibrate)
     {
       // Pre statistics
       ps.plan_id = m_spec->plan_id;
@@ -462,19 +460,21 @@ namespace Plan
       {
         sequenceNodes();
 
-        if (isLinear() && state != NULL)
+        if (isLinear() && state != nullptr)
         {
           m_profiles->parse(m_seq_nodes, state);
 
           Timeline tline;
           fillTimeline(tline);
 
-          Memory::clear(m_sched);
-          m_sched = new ActionSchedule(m_task, m_spec, m_seq_nodes,
-                                       tline, cinfo);
+          Memory::replace(m_sched, new ActionSchedule(m_task, m_spec, m_seq_nodes, tline, cinfo));
 
           // Update timeline with scheduled calibration time if any
-          tline.setPlanETA(std::max(m_sched->getEarliestSchedule(), getExecutionDuration()));
+          if (calibrate)
+            tline.setPlanETA(std::max(getExecutionDuration() + (float)m_min_cal_time,
+                                      m_sched->getEarliestSchedule()));
+          else
+            tline.setPlanETA(getExecutionDuration());
 
           // Fill component active time with action scheduler
           m_sched->fillComponentActiveTime(m_seq_nodes, tline, m_cat);
@@ -486,24 +486,28 @@ namespace Plan
           pre_stat.fill(m_cat);
 
           // Estimate necessary calibration time
-          float diff = m_sched->getEarliestSchedule() - getExecutionDuration();
-          m_est_cal_time = (uint16_t)std::max(0.0f, diff);
-          m_est_cal_time = (uint16_t)std::max(m_min_cal_time, m_est_cal_time);
+          if (calibrate)
+          {
+            float diff = m_sched->getEarliestSchedule() - getExecutionDuration();
+            m_est_cal_time = (uint16_t)std::max(0.0f, diff);
+            m_est_cal_time = (uint16_t)std::max(m_min_cal_time, m_est_cal_time);
+          }
+          else
+          {
+            m_est_cal_time = 0.0;
+          }
 
           if (m_predict_fuel)
           {
-            Memory::clear(m_fpred);
-            m_fpred = new FuelPrediction(m_profiles, &m_cat, m_power_model,
-                                         m_speed_model, imu_enabled, tline.getPlanETA());
+            Memory::replace(m_fpred, new FuelPrediction(m_profiles, &m_cat, m_power_model,
+                                                        m_speed_model, imu_enabled, tline.getPlanETA()));
             pre_stat.fill(*m_fpred);
           }
         }
         else if (!isLinear())
         {
-          Memory::clear(m_sched);
-          m_sched = new ActionSchedule(m_task, m_spec, m_seq_nodes, cinfo);
-
-          m_est_cal_time = m_min_cal_time;
+          Memory::replace(m_sched, new ActionSchedule(m_task, m_spec, m_seq_nodes, cinfo));
+          m_est_cal_time = calibrate ?  m_min_cal_time : 0.0;
         }
       }
 
@@ -514,7 +518,7 @@ namespace Plan
     }
 
     void
-    Plan::sequenceNodes(void)
+    Plan::sequenceNodes()
     {
       std::string maneuver_id = m_spec->start_man_id;
       PlanMap::iterator itr = m_graph.find(maneuver_id);
@@ -552,7 +556,7 @@ namespace Plan
 
       if (itr == m_graph.end())
       {
-        return NULL;
+        return nullptr;
       }
       else
       {
@@ -587,8 +591,7 @@ namespace Plan
       }
 
       // If it's not executing, do not compute
-      if (mcs->state != IMC::ManeuverControlState::MCS_EXECUTING ||
-          mcs->eta == 0)
+      if (mcs->state != IMC::ManeuverControlState::MCS_EXECUTING)
         return m_progress;
 
       TimeProfile::const_iterator itr;
@@ -641,14 +644,39 @@ namespace Plan
     {
       switch (maneuver->getId())
       {
+        case DUNE_IMC_ALIGNMENT:
+        {
+          // always at surface.
+          return true;
+        }
+        case DUNE_IMC_COMPASSCALIBRATION:
+        {
+          const IMC::CompassCalibration* m = static_cast<const IMC::CompassCalibration*>(maneuver);
+          return checkDepth((IMC::ZUnits)m->z_units, m->z);
+        }
+        case DUNE_IMC_ELEVATOR:
+        {
+          const IMC::Elevator* m = static_cast<const IMC::Elevator*>(maneuver);
+          if (m->start_z_units == IMC::Z_DEPTH)
+          {
+            if (m->start_z > m_max_depth)
+              return false;
+          }
+          if (m->end_z_units == IMC::Z_DEPTH)
+          {
+            if (m->end_z > m_max_depth)
+              return false;
+          }
+          break;
+        }
+        case DUNE_IMC_FOLLOWPATH:
+        {
+          const IMC::FollowPath* m = static_cast<const IMC::FollowPath*>(maneuver);
+          return checkDepth((IMC::ZUnits)m->z_units, m->z);
+        }
         case DUNE_IMC_GOTO:
         {
           const IMC::Goto* m = static_cast<const IMC::Goto*>(maneuver);
-          return checkDepth((IMC::ZUnits)m->z_units, m->z);
-        }
-        case DUNE_IMC_POPUP:
-        {
-          const IMC::PopUp* m = static_cast<const IMC::PopUp*>(maneuver);
           return checkDepth((IMC::ZUnits)m->z_units, m->z);
         }
         case DUNE_IMC_LAUNCH:
@@ -661,24 +689,19 @@ namespace Plan
           const IMC::Loiter* m = static_cast<const IMC::Loiter*>(maneuver);
           return checkDepth((IMC::ZUnits)m->z_units, m->z);
         }
+        case DUNE_IMC_MAGNETOMETER:
+        {
+          const IMC::Magnetometer* m = static_cast<const IMC::Magnetometer*>(maneuver);
+          return checkDepth((IMC::ZUnits)m->z_units, m->z);
+        }
+        case DUNE_IMC_POPUP:
+        {
+          const IMC::PopUp* m = static_cast<const IMC::PopUp*>(maneuver);
+          return checkDepth((IMC::ZUnits)m->z_units, m->z);
+        }
         case DUNE_IMC_ROWS:
         {
           const IMC::Rows* m = static_cast<const IMC::Rows*>(maneuver);
-          return checkDepth((IMC::ZUnits)m->z_units, m->z);
-        }
-        case DUNE_IMC_ROWSCOVERAGE:
-        {
-          const IMC::RowsCoverage* m = static_cast<const IMC::RowsCoverage*>(maneuver);
-          return checkDepth((IMC::ZUnits)m->z_units, m->z);
-        }
-        case DUNE_IMC_FOLLOWPATH:
-        {
-          const IMC::FollowPath* m = static_cast<const IMC::FollowPath*>(maneuver);
-          return checkDepth((IMC::ZUnits)m->z_units, m->z);
-        }
-        case DUNE_IMC_YOYO:
-        {
-          const IMC::YoYo* m = static_cast<const IMC::YoYo*>(maneuver);
           return checkDepth((IMC::ZUnits)m->z_units, m->z);
         }
         case DUNE_IMC_STATIONKEEPING:
@@ -686,38 +709,10 @@ namespace Plan
           const IMC::StationKeeping* m = static_cast<const IMC::StationKeeping*>(maneuver);
           return checkDepth((IMC::ZUnits)m->z_units, m->z);
         }
-        case DUNE_IMC_COMPASSCALIBRATION:
+        case DUNE_IMC_YOYO:
         {
-          const IMC::CompassCalibration* m = static_cast<const IMC::CompassCalibration*>(maneuver);
+          const IMC::YoYo* m = static_cast<const IMC::YoYo*>(maneuver);
           return checkDepth((IMC::ZUnits)m->z_units, m->z);
-        }
-        case DUNE_IMC_ELEVATOR:
-        {
-          const IMC::Elevator* m = static_cast<const IMC::Elevator*>(maneuver);
-          if (m->start_z_units == IMC::Z_DEPTH)
-          {
-            if (m->start_z > m_max_depth + c_depth_margin)
-              return false;
-          }
-          if (m->end_z_units == IMC::Z_DEPTH)
-          {
-            if (m->end_z > m_max_depth + c_depth_margin)
-              return false;
-          }
-        }
-        case DUNE_IMC_SCHEDULEDGOTO:
-        {
-          const IMC::ScheduledGoto* m = static_cast<const IMC::ScheduledGoto*>(maneuver);
-          if (m->z_units == IMC::Z_DEPTH)
-          {
-            if (m->z > m_max_depth + c_depth_margin)
-              return false;
-          }
-          if (m->travel_z_units == IMC::Z_DEPTH)
-          {
-            if (m->travel_z > m_max_depth + c_depth_margin)
-              return false;
-          }
         }
         default:
           ;

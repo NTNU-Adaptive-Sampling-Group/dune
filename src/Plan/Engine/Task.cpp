@@ -1,5 +1,5 @@
 //***************************************************************************
-// Copyright 2007-2021 Universidade do Porto - Faculdade de Engenharia      *
+// Copyright 2007-2016 Universidade do Porto - Faculdade de Engenharia      *
 // Laboratório de Sistemas e Tecnologia Subaquática (LSTS)                  *
 //***************************************************************************
 // This file is part of DUNE: Unified Navigation Environment.               *
@@ -8,20 +8,18 @@
 // Licencees holding valid commercial DUNE licences may use this file in    *
 // accordance with the commercial licence agreement provided with the       *
 // Software or, alternatively, in accordance with the terms contained in a  *
-// written agreement between you and Faculdade de Engenharia da             *
-// Universidade do Porto. For licensing terms, conditions, and further      *
-// information contact lsts@fe.up.pt.                                       *
+// written agreement between you and Universidade do Porto. For licensing   *
+// terms, conditions, and further information contact lsts@fe.up.pt.        *
 //                                                                          *
-// Modified European Union Public Licence - EUPL v.1.1 Usage                *
-// Alternatively, this file may be used under the terms of the Modified     *
-// EUPL, Version 1.1 only (the "Licence"), appearing in the file LICENCE.md *
+// European Union Public Licence - EUPL v.1.1 Usage                         *
+// Alternatively, this file may be used under the terms of the EUPL,        *
+// Version 1.1 only (the "Licence"), appearing in the file LICENCE.md       *
 // included in the packaging of this file. You may not use this work        *
 // except in compliance with the Licence. Unless required by applicable     *
 // law or agreed to in writing, software distributed under the Licence is   *
 // distributed on an "AS IS" basis, WITHOUT WARRANTIES OR CONDITIONS OF     *
 // ANY KIND, either express or implied. See the Licence for the specific    *
 // language governing permissions and limitations at                        *
-// https://github.com/LSTS/dune/blob/master/LICENCE.md and                  *
 // http://ec.europa.eu/idabc/eupl.html.                                     *
 //***************************************************************************
 // Author: Eduardo Marques                                                  *
@@ -32,6 +30,7 @@
 #include <DUNE/DUNE.hpp>
 
 // Local headers.
+#include "DB.hpp"
 #include "Plan.hpp"
 #include "Calibration.hpp"
 
@@ -58,9 +57,6 @@ namespace Plan
     //! Plan state descriptions
     const char* c_state_desc[] = {DTR_RT("BLOCKED"), DTR_RT("READY"),
                                   DTR_RT("INITIALIZING"), DTR_RT("EXECUTING")};
-    //! DataBase statement
-    static const char* c_get_plan_stmt = "select data from Plan where plan_id=?";
-
     struct Arguments
     {
       //! Whether or not to compute plan's progress
@@ -93,6 +89,8 @@ namespace Plan
 
     struct Task: public DUNE::Tasks::Task
     {
+      //! Pointer to DB class
+      DB* m_db;
       //! Pointer to Plan class
       Plan* m_plan;
       //! Plan control interface
@@ -128,13 +126,17 @@ namespace Plan
       std::queue<IMC::PlanControl> m_requests;
       //! Plan database file.
       Path m_db_file;
+      //! Currently ignoring errors while executing plan.
+      bool m_ign_err;
       //! Task arguments.
       Arguments m_args;
 
       Task(const std::string& name, Tasks::Context& ctx):
         DUNE::Tasks::Task(name, ctx),
-        m_plan(NULL),
-        m_imu_enabled(false)
+        m_db(nullptr),
+        m_plan(nullptr),
+        m_imu_enabled(false),
+        m_ign_err(false)
       {
         param("Compute Progress", m_args.progress)
         .defaultValue("false")
@@ -189,19 +191,21 @@ namespace Plan
 
         m_db_file = m_ctx.dir_db / "Plan.db";
 
-        bind<IMC::PlanControl>(this);
+        bind<IMC::EntityInfo>(this);
+        bind<IMC::EntityActivationState>(this);
         bind<IMC::EstimatedState>(this);
+        bind<IMC::FuelLevel>(this);
         bind<IMC::ManeuverControlState>(this);
+        bind<IMC::PlanControl>(this);
+        bind<IMC::PlanDB>(this);
+        bind<IMC::PowerOperation>(this);
         bind<IMC::RegisterManeuver>(this);
         bind<IMC::VehicleCommand>(this);
         bind<IMC::VehicleState>(this);
-        bind<IMC::EntityInfo>(this);
-        bind<IMC::EntityActivationState>(this);
-        bind<IMC::FuelLevel>(this);
       }
 
       void
-      onEntityResolution(void)
+      onEntityResolution() override
       {
         try
         {
@@ -223,31 +227,34 @@ namespace Plan
       }
 
       void
-      onUpdateParameters(void)
+      onUpdateParameters() override
       {
         if (paramChanged(m_args.speriod))
           m_args.speriod = 1.0 / m_args.speriod;
 
-        if ((m_plan != NULL) && (paramChanged(m_args.progress) ||
+        if ((m_plan != nullptr) && (paramChanged(m_args.progress) ||
                                  paramChanged(m_args.calibration_time)))
           throw RestartNeeded(DTR("restarting to relaunch plan parser"), 0, false);
       }
 
       void
-      onResourceRelease(void)
+      onResourceRelease() override
       {
         Memory::clear(m_plan);
+        Memory::clear(m_db);
       }
 
       void
-      onResourceAcquisition(void)
+      onResourceAcquisition() override
       {
         m_plan = new Plan(&m_spec, m_args.progress, m_args.fpredict, m_args.max_depth,
                           this, m_args.calibration_time, &m_ctx.config);
+
+        m_db = new DB(this, m_db_file);
       }
 
       void
-      onResourceInitialization(void)
+      onResourceInitialization() override
       {
         debug("database file: '%s'", m_db_file.c_str());
         setEntityState(IMC::EntityState::ESTA_NORMAL, Status::CODE_ACTIVE);
@@ -270,6 +277,13 @@ namespace Plan
 
         if (msg->state == IMC::ManeuverControlState::MCS_DONE)
           m_plan->maneuverDone();
+
+        // Must be executing to update progress
+        if (m_plan == nullptr || !execMode())
+          return;
+
+        m_pcs.plan_progress = m_plan->updateProgress(&m_mcs);
+        m_pcs.plan_eta = (int32_t)m_plan->getETA();
       }
 
       void
@@ -281,6 +295,9 @@ namespace Plan
       void
       consume(const IMC::EntityInfo* msg)
       {
+        if (msg->getSource() != getSystemId())
+          return;
+
         m_cinfo.insert(std::pair<std::string, IMC::EntityInfo>(msg->label, *msg));
       }
 
@@ -291,7 +308,7 @@ namespace Plan
         if (msg->getSource() != getSystemId())
           return;
 
-        if (m_plan != NULL)
+        if (m_plan != nullptr)
         {
           std::string id;
 
@@ -309,7 +326,7 @@ namespace Plan
             std::string error = String::str(DTR("failed to activate %s: %s"),
                                             id.c_str(), msg->error.c_str());
 
-            if (m_args.actfail_abort)
+            if (m_args.actfail_abort && !m_ign_err)
             {
               onFailure(error);
 
@@ -341,7 +358,10 @@ namespace Plan
       void
       consume(const IMC::FuelLevel* msg)
       {
-        if (m_plan == NULL)
+        if (msg->getSource() != getSystemId())
+          return;
+
+        if (m_plan == nullptr)
           return;
 
         m_plan->onFuelLevel(msg);
@@ -382,6 +402,9 @@ namespace Plan
       void
       consume(const IMC::VehicleState* vs)
       {
+        if (vs->getSource() != getSystemId())
+          return;
+
         if (getEntityState() == IMC::EntityState::ESTA_BOOT)
           return;
 
@@ -408,7 +431,7 @@ namespace Plan
         }
 
         // update calibration status
-        if (m_plan != NULL && initMode())
+        if (m_plan != nullptr && initMode())
         {
           m_plan->updateCalibration(vs);
 
@@ -546,6 +569,8 @@ namespace Plan
       void
       consume(const IMC::PlanControl* pc)
       {
+        m_db->consume(pc);
+
         if (pc->type != IMC::PlanControl::PC_REQUEST)
           return;
 
@@ -556,6 +581,9 @@ namespace Plan
             ((pc->getSource() != getSystemId()) ||
              (pc->getSourceEntity() != m_eid_gen)))
           return;
+
+        if (pc->op == IMC::PlanControl::PC_START)
+          m_ign_err = pc->flags & IMC::PlanControl::FLG_IGNORE_ERRORS;
 
         if (pendingReply())
         {
@@ -576,12 +604,20 @@ namespace Plan
       }
 
       void
+      consume(const IMC::PlanDB* msg)
+      {
+        m_db->consume(msg);
+      }
+
+      void
+      consume(const IMC::PowerOperation* msg)
+      {
+        m_db->consume(msg);
+      }
+
+      void
       processRequest(const IMC::PlanControl* pc)
       {
-        if (pc->getDestination() != getSystemId()
-            && pc->getDestination() != m_ctx.resolver.resolve("broadcast"))
-        return;
-
         m_reply.setDestination(pc->getSource());
         m_reply.setDestinationEntity(pc->getSourceEntity());
         m_reply.request_id = pc->request_id;
@@ -601,14 +637,14 @@ namespace Plan
         switch (pc->op)
         {
           case IMC::PlanControl::PC_START:
-            if (!startPlan(pc->plan_id, pc->arg.isNull() ? 0 : pc->arg.get(), pc->flags))
+            if (!startPlan(pc->plan_id, pc->arg.isNull() ? nullptr : pc->arg.get(), pc->flags))
               vehicleRequest(IMC::VehicleCommand::VC_STOP_MANEUVER);
             break;
           case IMC::PlanControl::PC_STOP:
             stopPlan();
             break;
           case IMC::PlanControl::PC_LOAD:
-            loadPlan(pc->plan_id, pc->arg.isNull() ? 0 : pc->arg.get(), false);
+            loadPlan(pc->plan_id, pc->arg.isNull() ? nullptr : pc->arg.get(), false, doCalib(pc->flags));
             break;
           case IMC::PlanControl::PC_GET:
             getPlan();
@@ -623,10 +659,11 @@ namespace Plan
       //! @param[in] plan_id name of the plan
       //! @param[in] arg argument which may either be a maneuver or a plan specification
       //! @param[in] plan_startup true if a plan will start right after
+      //! @param[in] calibrate calibrate system before execution
       //! @return true if plan is successfully loaded
       bool
       loadPlan(const std::string& plan_id, const IMC::Message* arg,
-               bool plan_startup = false)
+               bool plan_startup = false, bool calibrate = true)
       {
         if ((initMode() && !plan_startup) || execMode())
         {
@@ -644,7 +681,7 @@ namespace Plan
 
         IMC::PlanStatistics ps;
 
-        if (!parsePlan(plan_startup, ps))
+        if (!parsePlan(plan_startup, calibrate, ps))
         {
           changeMode(IMC::PlanControlState::PCS_READY,
                      DTR("plan parse failed: ") + m_reply.info);
@@ -664,7 +701,7 @@ namespace Plan
 
       //! Get current plan
       void
-      getPlan(void)
+      getPlan()
       {
         if (!initMode() && !execMode())
         {
@@ -716,15 +753,16 @@ namespace Plan
 
       //! Parse a given plan
       //! @param[in] plan_startup true if the plan is starting up
+      //! @param[in] calibrate calibrate before execution
       //! @param[out] ps reference to PlanStatistics message
       //! @return true if was able to parse the plan
       inline bool
-      parsePlan(bool plan_startup, IMC::PlanStatistics& ps)
+      parsePlan(bool plan_startup, bool calibrate, IMC::PlanStatistics& ps)
       {
         try
         {
           m_plan->parse(&m_supported_maneuvers, m_cinfo,
-                        ps, m_imu_enabled, &m_state);
+                        ps, m_imu_enabled, &m_state, calibrate);
         }
         catch (Plan::ParseError& pe)
         {
@@ -736,45 +774,6 @@ namespace Plan
         // if a plan is not gonna start after this, clear plan object
         if (!plan_startup)
           m_plan->clear();
-
-        return true;
-      }
-
-      //! Look for a plan in the database
-      //! @param[in] plan_id name of the plan
-      //! @param[in] ps plan specification message
-      //! @return true if plan is found
-      bool
-      lookForPlan(const std::string& plan_id, IMC::PlanSpecification& ps)
-      {
-        if (plan_id.empty())
-        {
-          onFailure(DTR("undefined plan id"));
-          return false;
-        }
-
-        try
-        {
-          Database::Connection db(m_db_file.c_str(), Database::Connection::CF_RDONLY);
-
-          Database::Statement get_plan_stmt(c_get_plan_stmt, db);
-          get_plan_stmt << plan_id;
-          if (!get_plan_stmt.execute())
-          {
-            onFailure(DTR("undefined plan"));
-            return false;
-          }
-
-          Database::Blob data;
-          get_plan_stmt >> data;
-          ps.deserializeFields((const uint8_t*)&data[0], data.size());
-
-        }
-        catch (std::runtime_error& e)
-        {
-          onFailure(String::str(DTR("failed loading from DB: %s"), e.what()));
-          return false;
-        }
 
         return true;
       }
@@ -825,7 +824,12 @@ namespace Plan
           // Search DB
           m_spec.clear();
 
-          if (!lookForPlan(plan_id, m_spec))
+          if (m_db == nullptr)
+          {
+            info = m_reply.info;
+            return false;
+          }
+          else if (!m_db->lookForPlan(plan_id, m_spec))
           {
             info = m_reply.info;
             return false;
@@ -848,7 +852,7 @@ namespace Plan
         changeMode(IMC::PlanControlState::PCS_INITIALIZING,
                    DTR("plan initializing: ") + plan_id, TYPE_INF);
 
-        if (!loadPlan(plan_id, spec, true))
+        if (!loadPlan(plan_id, spec, true, doCalib(flags)))
           return stopped;
 
         changeLog(plan_id);
@@ -864,8 +868,7 @@ namespace Plan
 
         dispatch(m_spec);
 
-        if ((flags & IMC::PlanControl::FLG_CALIBRATE) &&
-            m_args.do_calib)
+        if (doCalib(flags))
         {
           if (!startCalibration())
             return stopped;
@@ -892,7 +895,7 @@ namespace Plan
       //! Send a request to start calibration procedures
       //! @return true if request was sent
       bool
-      startCalibration(void)
+      startCalibration()
       {
         if (blockedMode())
         {
@@ -900,7 +903,7 @@ namespace Plan
           return false;
         }
 
-        IMC::Message* m = 0;
+        IMC::Message* m = nullptr;
 
         IMC::StationKeeping sk;
 
@@ -924,7 +927,7 @@ namespace Plan
       void
       startManeuver(IMC::PlanManeuver* pman)
       {
-        if (pman == NULL)
+        if (pman == nullptr)
         {
           changeMode(IMC::PlanControlState::PCS_READY,
                      m_plan->getCurrentId() + DTR(": invalid maneuver ID"));
@@ -1049,12 +1052,12 @@ namespace Plan
       changeMode(IMC::PlanControlState::StateEnum s, const std::string& event_desc,
                  OutputType print = TYPE_WAR)
       {
-        changeMode(s, event_desc, "", NULL, print);
+        changeMode(s, event_desc, "", nullptr, print);
       }
 
       //! Set task's initial state
       void
-      setInitialState(void)
+      setInitialState()
       {
         m_pcs.state = IMC::PlanControlState::PCS_READY;
         m_pcs.plan_id.clear();
@@ -1072,10 +1075,11 @@ namespace Plan
 
       //! Report progress
       void
-      reportProgress(void)
+      reportProgress()
       {
-        // Must be executing or calibrating to be able to compute progress
-        if (m_plan == NULL || (!execMode() && !initMode()))
+        // Even though it is calibrating and no new maneuver control states are being sent,
+        // we need to call Plan's update progress to fetch proper progress and eta.
+        if (m_plan == nullptr || !initMode())
           return;
 
         m_pcs.plan_progress = m_plan->updateProgress(&m_mcs);
@@ -1083,7 +1087,7 @@ namespace Plan
       }
 
       void
-      onMain(void)
+      onMain() override
       {
         setInitialState();
 
@@ -1141,7 +1145,7 @@ namespace Plan
 
       void
       vehicleRequest(IMC::VehicleCommand::CommandEnum command,
-                     const IMC::Message* arg = 0)
+                     const IMC::Message* arg = nullptr)
       {
         m_vc.type = IMC::VehicleCommand::VC_REQUEST;
         m_vc.request_id = ++m_vreq_ctr;
@@ -1168,33 +1172,39 @@ namespace Plan
       }
 
       inline bool
-      pendingReply(void)
+      pendingReply()
       {
         return m_vc_reply_deadline >= 0;
       }
 
       inline bool
-      blockedMode(void) const
+      blockedMode() const
       {
         return m_pcs.state == IMC::PlanControlState::PCS_BLOCKED;
       }
 
       inline bool
-      readyMode(void) const
+      readyMode() const
       {
         return m_pcs.state == IMC::PlanControlState::PCS_READY;
       }
 
       inline bool
-      initMode(void) const
+      initMode() const
       {
         return m_pcs.state == IMC::PlanControlState::PCS_INITIALIZING;
       }
 
       inline bool
-      execMode(void) const
+      execMode() const
       {
         return m_pcs.state == IMC::PlanControlState::PCS_EXECUTING;
+      }
+
+      inline bool
+      doCalib(uint16_t flags)
+      {
+        return (flags & IMC::PlanControl::FLG_CALIBRATE) && m_args.do_calib;
       }
 
       void

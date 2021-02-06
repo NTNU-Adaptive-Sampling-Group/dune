@@ -1,5 +1,5 @@
 //***************************************************************************
-// Copyright 2007-2021 Universidade do Porto - Faculdade de Engenharia      *
+// Copyright 2007-2016 Universidade do Porto - Faculdade de Engenharia      *
 // Laboratório de Sistemas e Tecnologia Subaquática (LSTS)                  *
 //***************************************************************************
 // This file is part of DUNE: Unified Navigation Environment.               *
@@ -8,20 +8,18 @@
 // Licencees holding valid commercial DUNE licences may use this file in    *
 // accordance with the commercial licence agreement provided with the       *
 // Software or, alternatively, in accordance with the terms contained in a  *
-// written agreement between you and Faculdade de Engenharia da             *
-// Universidade do Porto. For licensing terms, conditions, and further      *
-// information contact lsts@fe.up.pt.                                       *
+// written agreement between you and Universidade do Porto. For licensing   *
+// terms, conditions, and further information contact lsts@fe.up.pt.        *
 //                                                                          *
-// Modified European Union Public Licence - EUPL v.1.1 Usage                *
-// Alternatively, this file may be used under the terms of the Modified     *
-// EUPL, Version 1.1 only (the "Licence"), appearing in the file LICENCE.md *
+// European Union Public Licence - EUPL v.1.1 Usage                         *
+// Alternatively, this file may be used under the terms of the EUPL,        *
+// Version 1.1 only (the "Licence"), appearing in the file LICENCE.md       *
 // included in the packaging of this file. You may not use this work        *
 // except in compliance with the Licence. Unless required by applicable     *
 // law or agreed to in writing, software distributed under the Licence is   *
 // distributed on an "AS IS" basis, WITHOUT WARRANTIES OR CONDITIONS OF     *
 // ANY KIND, either express or implied. See the Licence for the specific    *
 // language governing permissions and limitations at                        *
-// https://github.com/LSTS/dune/blob/master/LICENCE.md and                  *
 // http://ec.europa.eu/idabc/eupl.html.                                     *
 //***************************************************************************
 // Author: Pedro Calado                                                     *
@@ -82,8 +80,8 @@ namespace Plan
         m_starting_fuel(-1.0f),
         m_valid(true)
       {
-        if (profiles == NULL || cat == NULL ||
-            speed_model == NULL || power_model == NULL)
+        if (profiles == nullptr || cat == nullptr ||
+            speed_model == nullptr || power_model == nullptr)
         {
           m_valid = false;
           return;
@@ -99,10 +97,6 @@ namespace Plan
           m_fuel_parcels[FP_IMU] = 0.0f;
       }
 
-      //! Destructor
-      ~FuelPrediction(void)
-      { }
-
       //! Use fuel level messages to compute error in prediction
       //! @param[in] msg FuelLevel message
       void
@@ -117,7 +111,7 @@ namespace Plan
       //! Check if prediction error can be computed
       //! @return true if prediction error is valid, false otherwise
       inline bool
-      isFuelValid(void) const
+      isFuelValid() const
       {
         return (m_starting_fuel >= 0.0);
       }
@@ -126,7 +120,7 @@ namespace Plan
       //! Check if the fuel values are valid first!
       //! @return error in prediction in percentage
       inline float
-      getPredictionError(void) const
+      getPredictionError() const
       {
         return getTotal(true) - (m_starting_fuel - m_current_fuel);
       }

@@ -1,5 +1,5 @@
 //***************************************************************************
-// Copyright 2007-2021 Universidade do Porto - Faculdade de Engenharia      *
+// Copyright 2007-2016 Universidade do Porto - Faculdade de Engenharia      *
 // Laboratório de Sistemas e Tecnologia Subaquática (LSTS)                  *
 //***************************************************************************
 // This file is part of DUNE: Unified Navigation Environment.               *
@@ -8,24 +8,25 @@
 // Licencees holding valid commercial DUNE licences may use this file in    *
 // accordance with the commercial licence agreement provided with the       *
 // Software or, alternatively, in accordance with the terms contained in a  *
-// written agreement between you and Faculdade de Engenharia da             *
-// Universidade do Porto. For licensing terms, conditions, and further      *
-// information contact lsts@fe.up.pt.                                       *
+// written agreement between you and Universidade do Porto. For licensing   *
+// terms, conditions, and further information contact lsts@fe.up.pt.        *
 //                                                                          *
-// Modified European Union Public Licence - EUPL v.1.1 Usage                *
-// Alternatively, this file may be used under the terms of the Modified     *
-// EUPL, Version 1.1 only (the "Licence"), appearing in the file LICENCE.md *
+// European Union Public Licence - EUPL v.1.1 Usage                         *
+// Alternatively, this file may be used under the terms of the EUPL,        *
+// Version 1.1 only (the "Licence"), appearing in the file LICENCE.md       *
 // included in the packaging of this file. You may not use this work        *
 // except in compliance with the Licence. Unless required by applicable     *
 // law or agreed to in writing, software distributed under the Licence is   *
 // distributed on an "AS IS" basis, WITHOUT WARRANTIES OR CONDITIONS OF     *
 // ANY KIND, either express or implied. See the Licence for the specific    *
 // language governing permissions and limitations at                        *
-// https://github.com/LSTS/dune/blob/master/LICENCE.md and                  *
 // http://ec.europa.eu/idabc/eupl.html.                                     *
 //***************************************************************************
 // Author: Eduardo Marques                                                  *
 //***************************************************************************
+
+#ifndef PLAN_ENGINE_DB_HPP_INCLUDED_
+#define PLAN_ENGINE_DB_HPP_INCLUDED_
 
 // ISO C++ 98 headers.
 #include <cstddef>
@@ -35,7 +36,7 @@
 
 namespace Plan
 {
-  namespace DB
+  namespace Engine
   {
     using DUNE_NAMESPACES;
 
@@ -72,75 +73,44 @@ namespace Plan
     static const char* c_lastchange_query_stmt
     = "select change_time, change_sid, change_sname from LastChange";
 
-    static const char* c_op_desc[] = {DTR_RT("set plan"), DTR_RT("delete plan"),
-                                      DTR_RT("get plan"), DTR_RT("get plan info"),
-                                      DTR_RT("clear database"), DTR_RT("database state"),
-                                      DTR_RT("database initialization")};
+    static const char* c_db_op_desc[] = {DTR_RT("set plan"), DTR_RT("delete plan"),
+                                         DTR_RT("get plan"), DTR_RT("get plan info"),
+                                         DTR_RT("clear database"), DTR_RT("database state"),
+                                         DTR_RT("database initialization")};
 
-    struct Arguments
+    //! Plan Database manager.
+    class DB
     {
-      //! Path to DB file
-      std::string db_path;
-    };
-
-    struct Task: public DUNE::Tasks::Task
-    {
-      // Task arguments
-      Arguments m_args;
-      // Database handle.
-      Database::Connection* m_db;
-      // In progress reply message.
-      IMC::PlanDB m_reply;
-      // In progress reply message.
-      IMC::PlanDBInformation m_plan_info;
-      // Statements
-      Database::Statement* m_insert_plan_stmt;
-      Database::Statement* m_delete_plan_stmt;
-      Database::Statement* m_plan_iterator_stmt;
-      Database::Statement* m_query_plan_stmt;
-      Database::Statement* m_get_plan_stmt;
-      Database::Statement* m_delete_all_plans_stmt;
-      Database::Statement* m_lastchange_update_stmt;
-      Database::Statement* m_lastchange_query_stmt;
-      // Local request counter
-      uint16_t m_local_reqid;
-
-      Task(const std::string& name, Tasks::Context& ctx):
-        DUNE::Tasks::Task(name, ctx),
-        m_db(NULL),
+    public:
+      //! Default constructor
+      //! @param[in] task pointer to task.
+      //! @param[in] db_file database path file.
+      DB(Tasks::Task* task, Path db_file):
+        m_task(task),
+        m_db_file(db_file),
         m_local_reqid(0)
       {
-        param("DB Path", m_args.db_path)
-        .defaultValue("")
-        .description("Path to DB file");
+        acquire();
+      }
 
-        bind<IMC::PlanControl>(this);
-        bind<IMC::PlanDB>(this);
-        bind<IMC::PowerOperation>(this);
+      ~DB()
+      {
+        release();
       }
 
       void
-      onResourceAcquisition(void)
+      acquire()
       {
-        if (m_db != NULL)
-          return;
-
         m_reply.clear();
         m_reply.op = IMC::PlanDB::DBOP_BOOT;
         m_reply.request_id = m_local_reqid++;
-        m_reply.setDestination(getSystemId());
+        m_reply.setDestination(m_task->getSystemId());
 
         inProgress("initializing");
 
-        Path db_file;
-        if (m_args.db_path.empty())
-          db_file = m_ctx.dir_db / "Plan.db";
-        else
-          db_file = m_args.db_path;
+        m_task->inf(DTR("database file: '%s'"), m_db_file.c_str());
 
-        inf(DTR("database file: '%s'"), db_file.c_str());
-
-        m_db = new Database::Connection(db_file.c_str(), Database::Connection::CF_CREATE);
+        m_db = new Database::Connection(m_db_file.c_str(), Database::Connection::CF_CREATE);
 
         // Create Plan table and initialize associated statements
         m_db->execute(c_plan_table_stmt);
@@ -160,21 +130,19 @@ namespace Plan
         {
           Database::Statement initial_insert("insert into LastChange values(?,?,?)", *m_db);
           double now = Clock::getSinceEpoch();
-          initial_insert << now << getSystemId() << getSystemName();
+          initial_insert << now << m_task->getSystemId() << m_task->getSystemName();
           initial_insert.execute();
         }
 
         m_lastchange_query_stmt->reset();
 
-        setEntityState(IMC::EntityState::ESTA_NORMAL, Status::CODE_ACTIVE);
-
         onSuccess(DTR("initialization complete"));
       }
 
       void
-      onResourceRelease(void)
+      release()
       {
-        if (m_db == NULL)
+        if (m_db == nullptr)
           return;
 
         delete m_insert_plan_stmt;
@@ -187,7 +155,7 @@ namespace Plan
         delete m_lastchange_query_stmt;
         delete m_db;
 
-        m_db = NULL;
+        m_db = nullptr;
       }
 
       void
@@ -221,8 +189,8 @@ namespace Plan
         m_reply.plan_id = pc->plan_id;
         m_reply.request_id = m_local_reqid++;
         m_reply.setDestination(0xFFFF);
-        m_reply.setDestinationEntity(getEntityId());
-        war(DTR("storing plan '%s' issued through a PlanControl request"), ps->plan_id.c_str());
+        m_reply.setDestinationEntity(m_task->getEntityId());
+        m_task->war(DTR("storing plan '%s' issued through a PlanControl request"), ps->plan_id.c_str());
 
         storeInDB(ps);
       }
@@ -230,17 +198,16 @@ namespace Plan
       void
       consume(const IMC::PowerOperation* po)
       {
-        if (po->getDestination() != getSystemId())
+        if (po->getDestination() != m_task->getSystemId())
           return;
 
         switch (po->op)
         {
           case IMC::PowerOperation::POP_PWR_DOWN_IP:
-            onResourceRelease();
-            setEntityState(IMC::EntityState::ESTA_ERROR, Status::CODE_POWER_DOWN);
+            release();
             break;
           case IMC::PowerOperation::POP_PWR_DOWN_ABORTED:
-            onResourceAcquisition();
+            acquire();
             break;
           default:
             break;
@@ -252,7 +219,7 @@ namespace Plan
       {
         if (req->type != IMC::PlanDB::DBT_REQUEST)
         {
-          war(DTR("unexpected message"));
+          m_task->war(DTR("unexpected message"));
           return;
         }
 
@@ -291,7 +258,6 @@ namespace Plan
               clearDatabase(*req);
               break;
             case IMC::PlanDB::DBOP_GET_STATE:
-            case IMC::PlanDB::DBOP_GET_DSTATE:
               m_reply.plan_id.clear();
               getDatabaseState(*req);
               break;
@@ -308,11 +274,52 @@ namespace Plan
         m_reply.arg.clear();
       }
 
+      //! Look for a plan in the database
+      //! @param[in] plan_id name of the plan
+      //! @param[in] ps plan specification message
+      //! @return true if plan is found
+      bool
+      lookForPlan(const std::string& plan_id, IMC::PlanSpecification& ps)
+      {
+        if (m_db == nullptr)
+          return false;
+
+        if (plan_id.empty())
+        {
+          onFailure(DTR("undefined plan id"));
+          return false;
+        }
+
+        try
+        {
+          Database::Statement get_plan_stmt(c_get_plan_stmt, *m_db);
+          get_plan_stmt << plan_id;
+          if (!get_plan_stmt.execute())
+          {
+            onFailure(DTR("undefined plan"));
+            return false;
+          }
+
+          Database::Blob data;
+          get_plan_stmt >> data;
+          ps.deserializeFields((const uint8_t*)&data[0], data.size());
+
+        }
+        catch (std::runtime_error& e)
+        {
+          onFailure(String::str(DTR("failed loading from DB: %s"), e.what()));
+          return false;
+        }
+
+        return true;
+      }
+
+    private:
       void
       onChange(const IMC::PlanDB& req)
       {
         uint16_t sid = req.getSource();
-        onChange(Clock::getSinceEpoch(), sid, resolveSystemId(sid));
+        onChange(Clock::getSinceEpoch(), sid, m_task->resolveSystemId(sid));
       }
 
       void
@@ -337,7 +344,7 @@ namespace Plan
           return;
         }
 
-        const IMC::PlanSpecification* spec = 0;
+        const IMC::PlanSpecification* spec = nullptr;
 
         if (!req.arg.get(spec))
         {
@@ -363,7 +370,7 @@ namespace Plan
         m_plan_info.plan_id = spec->plan_id;
         m_plan_info.change_time = Clock::getSinceEpoch();
         m_plan_info.change_sid = spec->getSource();
-        m_plan_info.change_sname = resolveSystemId(m_plan_info.change_sid);
+        m_plan_info.change_sname = m_task->resolveSystemId(m_plan_info.change_sid);
 
         Database::Blob plan_data(m_plan_info.plan_size);
         spec->serializeFields((uint8_t*)&plan_data[0]);
@@ -572,59 +579,70 @@ namespace Plan
       }
 
       void
-      answer(uint8_t type, const char* desc)
+      answer(uint8_t type, const std::string& desc)
       {
         m_reply.type = type;
         m_reply.info = desc;
-        dispatch(m_reply);
+        m_task->dispatch(m_reply);
 
         switch (m_reply.op)
         {
           case IMC::PlanDB::DBOP_SET:
           case IMC::PlanDB::DBOP_DEL:
           case IMC::PlanDB::DBOP_CLEAR:
-            {
-              if (type == IMC::PlanDB::DBT_FAILURE)
-                err("%s (%s) -- %s", DTR(c_op_desc[m_reply.op]),
-                    m_reply.plan_id.c_str(), desc);
-              else if (type == IMC::PlanDB::DBT_SUCCESS)
-                inf("%s (%s) -- %s", DTR(c_op_desc[m_reply.op]),
-                    m_reply.plan_id.c_str(), desc);
-              else
-                debug("%s (%s) -- %s", DTR(c_op_desc[m_reply.op]),
-                      m_reply.plan_id.c_str(), desc);
-            }
+            if (type == IMC::PlanDB::DBT_FAILURE)
+              m_task->err("%s (%s) -- %s", DTR(c_db_op_desc[m_reply.op]),
+                          m_reply.plan_id.c_str(), desc.c_str());
+            else if (type == IMC::PlanDB::DBT_SUCCESS)
+              m_task->inf("%s (%s) -- %s", DTR(c_db_op_desc[m_reply.op]),
+                          m_reply.plan_id.c_str(), desc.c_str());
+            else
+              m_task->debug("%s (%s) -- %s", DTR(c_db_op_desc[m_reply.op]),
+                            m_reply.plan_id.c_str(), desc.c_str());
         }
       }
 
       void
-      inProgress(const char* msg = "in progress")
+      inProgress(const std::string& msg = "in progress")
       {
         answer(IMC::PlanDB::DBT_IN_PROGRESS, msg);
       }
 
       void
-      onFailure(const char* errmsg)
+      onFailure(const std::string& errmsg)
       {
         answer(IMC::PlanDB::DBT_FAILURE, errmsg);
       }
 
       void
-      onSuccess(const char* msg = DTR("OK"))
+      onSuccess(const std::string& msg = DTR("OK"))
       {
         answer(IMC::PlanDB::DBT_SUCCESS, msg);
       }
 
-      void
-      onMain(void)
-      {
-        while (!stopping())
-        {
-          waitForMessages(1.0);
-        }
-      }
+      // Pointer to task.
+      Tasks::Task* m_task;
+      // Database Path
+      Path m_db_file;
+      // Database handle.
+      Database::Connection* m_db;
+      // In progress reply message.
+      IMC::PlanDB m_reply;
+      // In progress reply message.
+      IMC::PlanDBInformation m_plan_info;
+      // Statements
+      Database::Statement* m_insert_plan_stmt;
+      Database::Statement* m_delete_plan_stmt;
+      Database::Statement* m_plan_iterator_stmt;
+      Database::Statement* m_query_plan_stmt;
+      Database::Statement* m_get_plan_stmt;
+      Database::Statement* m_delete_all_plans_stmt;
+      Database::Statement* m_lastchange_update_stmt;
+      Database::Statement* m_lastchange_query_stmt;
+      // Local request counter
+      uint16_t m_local_reqid;
     };
   }
 }
 
-DUNE_TASK
+#endif

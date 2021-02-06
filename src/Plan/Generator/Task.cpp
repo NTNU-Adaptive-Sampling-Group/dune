@@ -1,5 +1,5 @@
 //***************************************************************************
-// Copyright 2007-2021 Universidade do Porto - Faculdade de Engenharia      *
+// Copyright 2007-2016 Universidade do Porto - Faculdade de Engenharia      *
 // Laboratório de Sistemas e Tecnologia Subaquática (LSTS)                  *
 //***************************************************************************
 // This file is part of DUNE: Unified Navigation Environment.               *
@@ -8,20 +8,18 @@
 // Licencees holding valid commercial DUNE licences may use this file in    *
 // accordance with the commercial licence agreement provided with the       *
 // Software or, alternatively, in accordance with the terms contained in a  *
-// written agreement between you and Faculdade de Engenharia da             *
-// Universidade do Porto. For licensing terms, conditions, and further      *
-// information contact lsts@fe.up.pt.                                       *
+// written agreement between you and Universidade do Porto. For licensing   *
+// terms, conditions, and further information contact lsts@fe.up.pt.        *
 //                                                                          *
-// Modified European Union Public Licence - EUPL v.1.1 Usage                *
-// Alternatively, this file may be used under the terms of the Modified     *
-// EUPL, Version 1.1 only (the "Licence"), appearing in the file LICENCE.md *
+// European Union Public Licence - EUPL v.1.1 Usage                         *
+// Alternatively, this file may be used under the terms of the EUPL,        *
+// Version 1.1 only (the "Licence"), appearing in the file LICENCE.md       *
 // included in the packaging of this file. You may not use this work        *
 // except in compliance with the Licence. Unless required by applicable     *
 // law or agreed to in writing, software distributed under the Licence is   *
 // distributed on an "AS IS" basis, WITHOUT WARRANTIES OR CONDITIONS OF     *
 // ANY KIND, either express or implied. See the Licence for the specific    *
 // language governing permissions and limitations at                        *
-// https://github.com/LSTS/dune/blob/master/LICENCE.md and                  *
 // http://ec.europa.eu/idabc/eupl.html.                                     *
 //***************************************************************************
 // Author: José Pinto                                                       *
@@ -48,6 +46,9 @@ namespace Plan
   //! @author José Pinto
   namespace Generator
   {
+    //! Minimum radius of generated plans.
+    static const float c_min_radius = 20.0f;
+
     struct Arguments
     {
       //! The depth of the generated Loiter maneuvers.
@@ -75,39 +76,47 @@ namespace Plan
       //! Stores the last estimated state;
       IMC::EstimatedState* m_estate;
       //! Stores the last LblConfig message
-      IMC::LblConfig* m_last_lbl_config;
+      IMC::LblConfig* m_cfg;
       //! map for storing last received announces
       std::map<unsigned int, IMC::Announce> m_last_announces;
 
       //! Class constructor
       Task(const std::string& name, Tasks::Context& ctx):
         DUNE::Tasks::Task(name, ctx),
-        m_estate(NULL),
-        m_last_lbl_config(NULL)
+        m_estate(nullptr),
+        m_cfg(nullptr)
       {
-        param("Dive depth", m_args.dive_depth)
-        .description("Depth to dive in response to 'dive' command")
-        .defaultValue("5.0");
+        param("Traveling Depth", m_args.travel_depth)
+        .defaultValue("2.0")
+        .units(Units::Meter)
+        .description("Depth to use when traveling (Goto maneuvers)");
 
-        param("Traveling depth", m_args.travel_depth)
-        .description("Depth to use when traveling (Goto maneuvers)")
-        .defaultValue("1.0");
+        param("Dive Time", m_args.dive_time)
+        .defaultValue("300")
+        .minimumValue("60")
+        .units(Units::Second)
+        .description("Time to be under water in response to 'dive' command (seconds)");
 
-        param("Dive seconds", m_args.dive_time)
-        .description("Time to be under water in response to 'dive' command (seconds)")
-        .defaultValue("300");
+        param("Dive Depth", m_args.dive_depth)
+        .defaultValue("5.0")
+        .minimumValue("2.0")
+        .units(Units::Meter)
+        .description("Depth to dive in response to 'dive' command");
 
-        param("Loiter radius", m_args.radius)
-        .description("Radius of generated loiter and station keeping maneuvers")
-        .defaultValue("10.0");
+        param("Desired Radius", m_args.radius)
+        .defaultValue("20.0")
+        .minimumValue("10.0")
+        .units(Units::Meter)
+        .description("Radius of generated loiter and station keeping maneuvers");
 
         param("RPM Speed", m_args.speed_rpms)
-        .description("Speed in RPMs to be used in the generated maneuvers")
-        .defaultValue("1000");
+        .defaultValue("1000")
+        .minimumValue("600")
+        .description("Speed in RPMs to be used in the generated maneuvers");
 
         param("Generate At Boot", m_args.generate_at_boot)
-        .description("Set of commands for plans to generate at boot")
-        .defaultValue("");
+        .defaultValue("")
+        .description("Set of commands for plans to generate at boot");
 
         m_ctx.config.get("General", "Maximum Underwater RPMs", "1700.0", m_args.max_rpms);
         m_ctx.config.get("General", "Recovery Plan", "dislodge", m_args.recovery_plan);
@@ -120,10 +129,10 @@ namespace Plan
 
       //! Frees memory associated with stored messages.
       void
-      onResourceRelease(void)
+      onResourceRelease() override
       {
         Memory::clear(m_estate);
-        Memory::clear(m_last_lbl_config);
+        Memory::clear(m_cfg);
       }
 
       //! Stores the announce in the map (one announce per system id).
@@ -140,17 +149,14 @@ namespace Plan
         if (msg->getSource() != getSystemId())
           return;
 
-        if (m_estate == NULL)
+        if (m_estate == nullptr)
         {
           setEntityState(IMC::EntityState::ESTA_NORMAL, Status::CODE_ACTIVE);
-        }
-        else
-        {
-          delete m_estate;
-          m_estate = NULL;
+          m_estate = new IMC::EstimatedState(*msg);
+          return;
         }
 
-        m_estate = new IMC::EstimatedState(*msg);
+        *m_estate = *msg;
       }
 
       //! Stores the last received LblConfig message.
@@ -160,12 +166,12 @@ namespace Plan
         if (msg->op != IMC::LblConfig::OP_SET_CFG)
           return;
 
-        if (m_last_lbl_config)
+        if (m_cfg)
         {
-          delete m_last_lbl_config;
-          m_last_lbl_config = NULL;
+          delete m_cfg;
+          m_cfg = nullptr;
         }
-        m_last_lbl_config = new IMC::LblConfig(*msg);
+        m_cfg = new IMC::LblConfig(*msg);
       }
 
       //! Handles a PlanGeneration message. According to the 'plan_id' may result
@@ -242,14 +248,13 @@ namespace Plan
           if (tlist.get("calibrate") != "false")
             pcontrol.flags = IMC::PlanControl::FLG_CALIBRATE;
 
-          if (tlist.get("ignore_errors") == "true")
+          if (tlist.get("force") == "true")
             pcontrol.flags |= IMC::PlanControl::FLG_IGNORE_ERRORS;
 
           pcontrol.plan_id = spec.plan_id;
           pcontrol.request_id = 0;
           pcontrol.type = IMC::PlanControl::PC_REQUEST;
           pcontrol.op = IMC::PlanControl::PC_START;
-          pcontrol.setDestination(m_ctx.resolver.id());
           dispatch(pcontrol);
         }
 
@@ -261,38 +266,6 @@ namespace Plan
         dispatch(response);
       }
 
-      void
-      onMain(void)
-      {
-        // Generate plans at boot
-        if (!m_args.generate_at_boot.empty())
-        {
-          IMC::PlanGeneration pg;
-          pg.cmd = IMC::PlanGeneration::CMD_GENERATE;
-          pg.op = IMC::PlanGeneration::OP_REQUEST;
-
-          for (unsigned i = 0; i < m_args.generate_at_boot.size(); i++)
-          {
-            std::vector<std::string> lst;
-            Utils::String::split(m_args.generate_at_boot[i], ":", lst);
-
-            if (lst.size())
-            {
-              pg.plan_id = lst[0];
-              if (lst.size() >= 2)
-                pg.params = lst[1];
-
-              dispatch(pg, DF_LOOP_BACK);
-            }
-          }
-        }
-
-        while (!stopping())
-        {
-          waitForMessages(1.0);
-        }
-      }
-
       //! This (utilitary) method calculates the current position using the
       //! last received state.
       //! @param[out] lat where the current latitude will be stored
@@ -302,7 +275,7 @@ namespace Plan
       bool
       getCurrentPosition(double* lat, double* lon, double* depth)
       {
-        if (m_estate == NULL)
+        if (m_estate == nullptr)
           return false;
 
         *lat = m_estate->lat;
@@ -329,7 +302,7 @@ namespace Plan
         unsigned i = 0;
         for (itr = maneuvers->begin(); itr != maneuvers->end(); itr++, i++)
         {
-          if (*itr == NULL)
+          if (*itr == nullptr)
             continue;
 
           IMC::PlanManeuver man_spec;
@@ -369,10 +342,10 @@ namespace Plan
       void
       updatePositionFromBeacon(const std::string& match, const IMC::LblBeacon* msg, double* lat, double* lon)
       {
-        if (msg == NULL)
+        if (msg == nullptr)
           return;
 
-        if (msg != NULL && msg->beacon == match)
+        if (msg != nullptr && msg->beacon == match)
         {
           *lat = msg->lat;
           *lon = msg->lon;
@@ -392,433 +365,396 @@ namespace Plan
       generate(const std::string& plan_id, TupleList& params, IMC::PlanSpecification& result)
       {
         result.plan_id = plan_id;
-        //result.description = DTR("Plan generated automatically by DUNE.");
 
         inf(DTR("generating plan from '%s' template..."), plan_id.c_str());
 
-        // This template generates a plan that goes to a location and stays there (station keeping)
         if (plan_id == "go" || plan_id == "sk")
         {
-          // The location can be given either by the 'loc' parameter or 'lat' / 'lon'
-          std::string loc = params.get("loc");
-          double lat = Angles::radians(params.get("lat", 0.0));
-          double lon = Angles::radians(params.get("lon", 0.0));
-          double depth = params.get("depth", (double)-1);
-          if (depth == -1)
-            depth = params.get("d", m_args.travel_depth);
-
-          // Searches for a beacon whose name matches given loc
-          // in which case updates lat/lon with the beacon's location
-          if (loc != "" && m_last_lbl_config != NULL)
-          {
-            IMC::MessageList<IMC::LblBeacon>::const_iterator itr = m_last_lbl_config->beacons.begin();
-            for (unsigned i = 0; itr != m_last_lbl_config->beacons.end(); ++itr, ++i)
-              updatePositionFromBeacon(loc, *itr, &lat, &lon);
-          }
-
-          // Searches for a system with a name that matches given loc
-          // in which case updates lat/lon with the system's location
-          if (loc != "" && !m_last_announces.empty())
-          {
-            std::map<unsigned int, IMC::Announce>::iterator i;
-            for (i = m_last_announces.begin(); i != m_last_announces.end(); i++)
-            {
-              IMC::Announce an = i->second;
-              if (loc == an.sys_name)
-              {
-                lat = an.lat;
-                lon = an.lon;
-                break;
-              }
-            }
-          }
-
-          // if 'loc' is home, updates lat/lon with home location
-          if (loc == "home" && m_estate != NULL)
-          {
-            lat = m_estate->lat;
-            lon = m_estate->lon;
-          }
-
-          // if some latitude / longitude was given, goes there
-          if (lat != 0 && lon != 0)
-          {
-            IMC::MessageList<IMC::Maneuver> maneuvers;
-
-            // only generates a goto if the template is go, otherwise generates only a station keeping
-            if (plan_id == "go")
-            {
-              IMC::Goto* go_near = new IMC::Goto();
-              go_near->lat = lat;
-              go_near->lon = lon;
-              go_near->z = depth;
-              go_near->z_units = IMC::Z_DEPTH;
-              go_near->speed_units = IMC::SUNITS_RPM;
-              go_near->speed = m_args.speed_rpms;
-              maneuvers.push_back(*go_near);
-
-              delete go_near;
-            }
-
-            IMC::StationKeeping* at_surface = new IMC::StationKeeping();
-            at_surface->duration = 60;
-            at_surface->lat = lat;
-            at_surface->lon = lon;
-            at_surface->z = depth;
-            at_surface->z_units = IMC::Z_DEPTH;
-            at_surface->speed_units = IMC::SUNITS_RPM;
-            at_surface->speed = m_args.speed_rpms;
-            at_surface->radius = m_args.radius;
-            // SK radiuses must be at least 20
-            if (at_surface->radius < 20)
-              at_surface->radius = 20;
-            maneuvers.push_back(*at_surface);
-
-            delete at_surface;
-
-            sequentialPlan(plan_id, &maneuvers, result);
-
-            return true;
-          }
-        }
-
-        // This template makes the vehicle dive for some time
-        if (plan_id == "dive")
-        {
-          double lat, lon, depth;
-          getCurrentPosition(&lat, &lon, &depth);
-          depth = params.get("depth", m_args.dive_depth);
-
-          IMC::MessageList<IMC::Maneuver> maneuvers;
-
-          IMC::Loiter* loiter = new IMC::Loiter();
-          loiter->lat = lat;
-          loiter->lon = lon;
-          loiter->z = depth;
-          loiter->z_units = IMC::Z_DEPTH;
-          loiter->duration = params.get("duration", m_args.dive_time);
-          loiter->speed = params.get("rpm", m_args.speed_rpms);
-          loiter->speed_units = IMC::SUNITS_RPM;
-          loiter->radius = m_args.radius;
-          loiter->direction = IMC::Loiter::LD_CCLOCKW;
-
-          std::string default_type = "eight";
-          std::string type = params.get("type", default_type);
-          if (!type.compare("circular"))
-          {
-            loiter->type = IMC::Loiter::LT_CIRCULAR;
-          }
-          else
-          {
-            loiter->type = IMC::Loiter::LT_EIGHT;
-            loiter->length = loiter->radius * 2.5;
-          }
-
-          maneuvers.push_back(*loiter);
-
-          delete loiter;
-
-          sequentialPlan(plan_id, &maneuvers, result);
-
+          generateStationKeeping(plan_id, params, result);
           return true;
         }
-
-        // This template makes the vehicle come to the surface and wait
-        // above its current position
-        if (plan_id == "surface")
+        else if (plan_id == "dive")
         {
-          IMC::MessageList<IMC::Maneuver> maneuvers;
-
-          double lat, lon, depth;
-          getCurrentPosition(&lat, &lon, &depth);
-
-          IMC::Elevator* surface = new IMC::Elevator();
-          surface->flags = IMC::Elevator::FLG_CURR_POS;
-          surface->end_z = 0;
-          surface->end_z_units = IMC::Z_DEPTH;
-          surface->lat = lat;
-          surface->lon = lon;
-          surface->radius = m_args.radius;
-          surface->speed = m_args.speed_rpms;
-          surface->speed_units = IMC::SUNITS_RPM;
-          maneuvers.push_back(*surface);
-
-          delete surface;
-
-          IMC::StationKeeping* at_surface = new IMC::StationKeeping();
-          at_surface->duration = 120;
-          at_surface->lat = lat;
-          at_surface->lon = lon;
-          at_surface->z = 0.0;
-          at_surface->z_units = IMC::Z_DEPTH;
-          at_surface->speed_units = IMC::SUNITS_RPM;
-          at_surface->speed = m_args.speed_rpms;
-          at_surface->radius = m_args.radius;
-          maneuvers.push_back(*at_surface);
-
-          delete at_surface;
-
-          sequentialPlan(plan_id, &maneuvers, result);
-
+          generateDive(plan_id, params, result);
           return true;
         }
-
-        // This template makes the vehicle come to the surface and
-        // keep the motor running while loitering
-        // (useful when the buoyancy may have been compromised)
-        if (plan_id == "force_surface")
+        else if (plan_id == "surface")
         {
-          IMC::MessageList<IMC::Maneuver> maneuvers;
-
-          double lat, lon, depth;
-          getCurrentPosition(&lat, &lon, &depth);
-
-          IMC::Loiter* loiter = new IMC::Loiter();
-          loiter->lat = lat;
-          loiter->lon = lon;
-          loiter->z = 0.0f;
-          loiter->z_units = IMC::Z_DEPTH;
-          loiter->type = IMC::Loiter::LT_CIRCULAR;
-          loiter->direction = IMC::Loiter::LD_CCLOCKW;
-          loiter->duration = m_args.dive_time;
-          loiter->speed = m_args.speed_rpms;
-          loiter->speed_units = IMC::SUNITS_RPM;
-          loiter->radius = m_args.radius;
-          maneuvers.push_back(*loiter);
-
-          delete loiter;
-
-          sequentialPlan(plan_id, &maneuvers, result);
-
+          // This template makes the vehicle come to the surface and wait
+          // above its current position
+          generateSurface(plan_id, result);
           return true;
         }
-
-        // This template makes the vehicle survey the water column around a moving point
-        if (plan_id == "yoyo")
+        else if (plan_id == "force-surface")
         {
-          IMC::MessageList<IMC::Maneuver> maneuvers;
-
-          double curlat, curlon, curdepth;
-          double lat = Angles::radians(params.get("lat", 0.0));
-          double lon = Angles::radians(params.get("lon", 0.0));
-          double maxdepth = params.get("maxdepth", 4.0);
-          double mindepth = params.get("mindepth", 1.0);
-          double vn = params.get("vn", 0.0);
-          double ve = params.get("ve", 0.0);
-          double size = params.get("size", 50.0);
-          double speed = params.get("speed", 1.1);
-          double rot = params.get("rot", 0.0);
-          double popup = params.get("popup", 30);
-          double pitch = params.get("pitch", 15);
-          double time = 0;
-          double radius = std::sqrt((size * size) /2);
-          double ang = Angles::radians(45.0 + rot);
-          int i;
-
-          getCurrentPosition(&curlat, &curlon, &curdepth);
-
-          if (lat == 0 && lon == 0) {
-            lat = curlat;
-            lon = curlon;
-          }
-          time = WGS84::distance(curlat, curlon, 0, lat, lon, 0) / speed;
-          IMC::Goto* first = new IMC::Goto();
-          first->lat = lat;
-          first->lon = lon;
-          first->z = mindepth;
-          first->z_units = IMC::Z_DEPTH;
-          first->speed_units = IMC::SUNITS_METERS_PS;
-          first->speed = speed;
-          WGS84::displace(std::sin(ang) * radius + vn * time, std::cos(ang) * radius + ve * time, &(first->lat), &(first->lon));
-          maneuvers.push_back(*first);
-          if (popup > 0)
-          {
-            IMC::PopUp * p = new IMC::PopUp();
-            p->lat = first->lat;
-            p->lon = first->lon;
-            p->radius = 20;
-            p->z = 0;
-            p->z_units = IMC::Z_DEPTH;
-            p->duration = (int) popup;
-            p->speed = first->speed;
-            p->speed_units = first->speed_units;
-            maneuvers.push_back(*p);
-            delete p;
-          }
-          delete first;
-
-          for (i = 0; i < 4; i++) {
-            IMC::YoYo * yoyo = new IMC::YoYo();
-            yoyo->lat = lat;
-            yoyo->lon = lon;
-            yoyo->speed = speed;
-            yoyo->speed_units = IMC::SUNITS_METERS_PS;
-            yoyo->amplitude = (maxdepth - mindepth)/2;
-            yoyo->z = (mindepth + maxdepth) / 2;
-            yoyo->z_units = IMC::Z_DEPTH;
-            yoyo->pitch = Angles::radians(pitch);
-            ang =  Angles::radians(i * 90 + 135 + rot);
-            time += size / speed;
-            WGS84::displace(std::sin(ang) * radius + time * vn, std::cos(ang) * radius + time * ve, &(yoyo->lat), &(yoyo->lon));
-            maneuvers.push_back(*yoyo);
-            if (popup > 0)
-            {
-              IMC::PopUp * pop = new IMC::PopUp();
-              pop->lat = yoyo->lat;
-              pop->lon = yoyo->lon;
-              pop->radius = 20;
-              pop->z = 0;
-              pop->z_units = IMC::Z_DEPTH;
-              pop->duration = (int) popup;
-              pop->speed = yoyo->speed;
-              pop->speed_units = yoyo->speed_units;
-              maneuvers.push_back(*pop);
-              delete pop;
-            }
-            delete yoyo;
-          }
-
-          sequentialPlan(plan_id, &maneuvers, result);
+          // This template makes the vehicle come to the surface and
+          // keep the motor running while loitering
+          // (useful when the buoyancy may have been compromised)
+          generateForceSurface(plan_id, result);
           return true;
         }
-
-        // This template makes the vehicle survey the water column around a moving point
-        // using a simple lawn-mower pattern.
-        if (plan_id == "rows")
+        else if (plan_id == "yoyo")
         {
-          IMC::MessageList<IMC::Maneuver> maneuvers;
-
-          double curlat, curlon, curdepth;
-          double lat = Angles::radians(params.get("lat", 0.0));
-          double lon = Angles::radians(params.get("lon", 0.0));
-          double maxdepth = params.get("maxdepth", 4.0);
-          double mindepth = params.get("mindepth", 1.0);
-          double size = params.get("size", 50.0);
-          double speed = params.get("speed", 1.1);
-          double rot = params.get("rot", 0.0);
-          double popup = params.get("popup", 30);
-          double pitch = params.get("pitch", 15);
-          double radius = std::sqrt((size * size) /2);
-          double ang = Angles::radians(-45.0 + rot);
-
-          getCurrentPosition(&curlat, &curlon, &curdepth);
-
-          if (lat == 0 && lon == 0) {
-            lat = curlat;
-            lon = curlon;
-          }
-
-          IMC::Goto* first = new IMC::Goto();
-          first->lat = lat;
-          first->lon = lon;
-          first->z = mindepth;
-          first->z_units = IMC::Z_DEPTH;
-          first->speed_units = IMC::SUNITS_METERS_PS;
-          first->speed = speed;
-          WGS84::displace(std::sin(ang) * radius, std::cos(ang) * radius,
-                          &(first->lat), &(first->lon));
-          maneuvers.push_back(*first);
-
-          /* No popup after first goto is needed.
-          if (popup > 0)
-          {
-            IMC::PopUp * p = new IMC::PopUp();
-            p->lat = first->lat;
-            p->lon = first->lon;
-            p->radius = 20;
-            p->z = 0;
-            p->z_units = IMC::Z_DEPTH;
-            p->duration = (int) popup;
-            p->speed = first->speed;
-            p->speed_units = first->speed_units;
-            maneuvers.push_back(*p);
-            delete p;
-          } */
-          delete first;
-
-          IMC::YoYo * yoyo = new IMC::YoYo();
-          yoyo->lat = lat;
-          yoyo->lon = lon;
-          yoyo->speed = speed;
-          yoyo->speed_units = IMC::SUNITS_METERS_PS;
-          yoyo->amplitude = (maxdepth - mindepth)/2;
-          yoyo->z = (mindepth + maxdepth) / 2;
-          yoyo->z_units = IMC::Z_DEPTH;
-          yoyo->pitch = Angles::radians(pitch);
-
-          double minradius = std::sqrt(std::pow((size / 2), 2) +
-                                       std::pow((size / 4), 2));
-
-          // List with angles and radius.
-          Math::Matrix points(10, 2);
-          points(0, 0) = Angles::radians(-45 + rot);
-          points(0, 1) = radius;
-          points(1, 0) = Angles::radians(45 + rot);
-          points(1, 1) = radius;
-          points(2, 0) = std::atan2(radius / 2, radius / 4) + Angles::radians(rot);
-          points(2, 1) = minradius;
-          points(3, 0) = std::atan2(- radius / 2, radius / 4) + Angles::radians(rot);
-          points(3, 1) = minradius;
-          points(4, 0) = std::atan2(- radius / 2, 0) + Angles::radians(rot);
-          points(4, 1) = size / 2;
-          points(5, 0) = std::atan2(radius / 2, 0) + Angles::radians(rot);
-          points(5, 1) = size / 2;
-          points(6, 0) = std::atan2(radius / 2, - radius / 4) + Angles::radians(rot);
-          points(6, 1) = minradius;
-          points(7, 0) = std::atan2(- radius / 2, - radius / 4) + Angles::radians(rot);
-          points(7, 1) = minradius;
-          points(8, 0) = Angles::radians(45 + 180 + rot);
-          points(8, 1) = radius;
-          points(9, 0) = Angles::radians(45 + 90 + rot);
-          points(9, 1) = radius;
-
-          for (int i = 0; i < points.rows(); ++i)
-          {
-            yoyo->lat = lat;
-            yoyo->lon = lon;
-            WGS84::displace(std::sin(points(i, 0)) * points(i, 1),
-                            std::cos(points(i, 0)) * points(i, 1),
-                            &(yoyo->lat), &(yoyo->lon));
-            maneuvers.push_back(*yoyo);
-          }
-
-          if (popup > 0)
-          {
-            IMC::PopUp * pop = new IMC::PopUp();
-            pop->lat = lat;
-            pop->lon = lon;
-            pop->radius = 20;
-            pop->z = 0;
-            pop->z_units = IMC::Z_DEPTH;
-            pop->duration = (int) popup;
-            pop->speed = yoyo->speed;
-            pop->speed_units = yoyo->speed_units;
-            maneuvers.push_back(*pop);
-            delete pop;
-          }
-          delete yoyo;
-
-          sequentialPlan(plan_id, &maneuvers, result);
+          // This template makes the vehicle survey the water column around a moving point
+          generateYoYo(plan_id, params, result);
           return true;
         }
-
-        // This template generates a plan that attempts to dislodge the vehicle (dislodge)
-        if (plan_id == m_args.recovery_plan)
+        else if (plan_id == m_args.recovery_plan)
         {
-          IMC::MessageList<IMC::Maneuver> maneuvers;
-
-          IMC::Dislodge* dislodge = new IMC::Dislodge();
-          dislodge->rpm = params.get("rpm", m_args.max_rpms);
-          dislodge->direction = IMC::Dislodge::DIR_AUTO;
-          maneuvers.push_back(*dislodge);
-          delete dislodge;
-
-          sequentialPlan(plan_id, &maneuvers, result);
+          // This template generates a plan that dislodges the system.
+          generateDislodge(plan_id, params, result);
           return true;
         }
 
         // in the case the template is not understood, returns false
         return false;
+      }
+
+      //! This method generates a station keeping.
+      //! @param[in] plan_id the string to be parsed (command).
+      //! @param[in] params a tuple list with parameters to be used in the generation.
+      //! @param[out] result where to store the resulting plan specification.
+      //! @returns true if a plan was actually generated or false if result wasn't touched.
+      void
+      generateStationKeeping(const std::string& plan_id, TupleList& params, IMC::PlanSpecification& result)
+      {
+        // The location can be given either by the 'loc' parameter or 'lat' / 'lon'
+        std::string loc = params.get("loc");
+        double lat = Angles::radians(params.get("lat", 0.0));
+        double lon = Angles::radians(params.get("lon", 0.0));
+        double depth = params.get("depth", (double)-1);
+        if (depth == -1)
+          depth = params.get("d", m_args.travel_depth);
+
+        // Searches for a beacon whose name matches given loc
+        // in which case updates lat/lon with the beacon's location
+        if (loc != "" && m_cfg != nullptr)
+        {
+          IMC::MessageList<IMC::LblBeacon>::const_iterator itr = m_cfg->beacons.begin();
+          for (unsigned i = 0; itr != m_cfg->beacons.end(); ++itr, ++i)
+            updatePositionFromBeacon(loc, *itr, &lat, &lon);
+        }
+
+        // Searches for a system with a name that matches given loc
+        // in which case updates lat/lon with the system's location
+        if (loc != "" && !m_last_announces.empty())
+        {
+          std::map<unsigned int, IMC::Announce>::iterator i;
+          for (i = m_last_announces.begin(); i != m_last_announces.end(); i++)
+          {
+            IMC::Announce an = i->second;
+            if (loc == an.sys_name)
+            {
+              lat = an.lat;
+              lon = an.lon;
+              break;
+            }
+          }
+        }
+
+        // if 'loc' is home, updates lat/lon with home location
+        if (loc == "home" && m_estate != nullptr)
+        {
+          lat = m_estate->lat;
+          lon = m_estate->lon;
+        }
+
+        if (lat == 0 && lon == 0)
+        {
+          double d;
+          getCurrentPosition(&lat, &lon, &d);
+          (void)d;
+        }
+
+        // if some latitude / longitude was given, goes there
+        if (lat != 0 && lon != 0)
+        {
+          IMC::MessageList<IMC::Maneuver> maneuvers;
+
+          // only generates a goto if the template is go, otherwise generates only a station keeping
+          if (plan_id == "go")
+          {
+            IMC::Goto* go_near = new IMC::Goto();
+            go_near->lat = lat;
+            go_near->lon = lon;
+            go_near->z = depth;
+            go_near->z_units = IMC::Z_DEPTH;
+            go_near->speed_units = IMC::SUNITS_RPM;
+            go_near->speed = m_args.speed_rpms;
+            maneuvers.push_back(*go_near);
+            delete go_near;
+          }
+
+          IMC::StationKeeping* at_surface = new IMC::StationKeeping();
+          at_surface->duration = 0;
+          at_surface->lat = lat;
+          at_surface->lon = lon;
+          at_surface->z = depth;
+          at_surface->z_units = IMC::Z_DEPTH;
+          at_surface->speed_units = IMC::SUNITS_RPM;
+          at_surface->speed = m_args.speed_rpms;
+          at_surface->radius = m_args.radius;
+          if (at_surface->radius < c_min_radius)
+            at_surface->radius = c_min_radius;
+          maneuvers.push_back(*at_surface);
+          delete at_surface;
+
+          sequentialPlan(plan_id, &maneuvers, result);
+        }
+      }
+
+      //! This method generates a loiter.
+      //! @param[in] plan_id the string to be parsed (command).
+      //! @param[in] params a tuple list with parameters to be used in the generation.
+      //! @param[out] result where to store the resulting plan specification.
+      //! @returns true if a plan was actually generated or false if result wasn't touched.
+      void
+      generateDive(const std::string& plan_id, TupleList& params, IMC::PlanSpecification& result)
+      {
+        double lat, lon, depth;
+        getCurrentPosition(&lat, &lon, &depth);
+        depth = params.get("depth", m_args.dive_depth);
+
+        IMC::MessageList<IMC::Maneuver> maneuvers;
+
+        IMC::Loiter* loiter = new IMC::Loiter();
+        loiter->lat = lat;
+        loiter->lon = lon;
+        loiter->z = depth;
+        loiter->z_units = IMC::Z_DEPTH;
+        loiter->duration = params.get("duration", m_args.dive_time);
+        loiter->speed = params.get("rpm", m_args.speed_rpms);
+        loiter->speed_units = IMC::SUNITS_RPM;
+        loiter->radius = m_args.radius;
+        loiter->direction = IMC::Loiter::LD_CCLOCKW;
+
+        std::string default_type = "eight";
+        std::string type = params.get("type", default_type);
+        if (!type.compare("circular"))
+        {
+          loiter->type = IMC::Loiter::LT_CIRCULAR;
+        }
+        else
+        {
+          loiter->type = IMC::Loiter::LT_EIGHT;
+          loiter->length = loiter->radius * 2.5;
+        }
+
+        maneuvers.push_back(*loiter);
+        delete loiter;
+
+        sequentialPlan(plan_id, &maneuvers, result);
+      }
+
+      //! This method generates a popup.
+      //! @param[in] plan_id the string to be parsed (command).
+      //! @param[out] result where to store the resulting plan specification.
+      //! @returns true if a plan was actually generated or false if result wasn't touched.
+      void
+      generateSurface(const std::string& plan_id, IMC::PlanSpecification& result)
+      {
+        IMC::MessageList<IMC::Maneuver> maneuvers;
+
+        double lat, lon, depth;
+        getCurrentPosition(&lat, &lon, &depth);
+
+        IMC::Elevator* surface = new IMC::Elevator();
+        surface->flags = IMC::Elevator::FLG_CURR_POS;
+        surface->end_z = 0;
+        surface->end_z_units = IMC::Z_DEPTH;
+        surface->lat = lat;
+        surface->lon = lon;
+        surface->radius = m_args.radius;
+        surface->speed = m_args.speed_rpms;
+        surface->speed_units = IMC::SUNITS_RPM;
+        maneuvers.push_back(*surface);
+        delete surface;
+
+        IMC::StationKeeping* at_surface = new IMC::StationKeeping();
+        at_surface->duration = 120;
+        at_surface->lat = lat;
+        at_surface->lon = lon;
+        at_surface->z = 0.0;
+        at_surface->z_units = IMC::Z_DEPTH;
+        at_surface->speed_units = IMC::SUNITS_RPM;
+        at_surface->speed = m_args.speed_rpms;
+        at_surface->radius = m_args.radius;
+        maneuvers.push_back(*at_surface);
+        delete at_surface;
+
+        sequentialPlan(plan_id, &maneuvers, result);
+      }
+
+      //! This method generates a loiter at surface to keep the vehicle on surface.
+      //! @param[in] plan_id the string to be parsed (command).
+      //! @param[out] result where to store the resulting plan specification.
+      //! @returns true if a plan was actually generated or false if result wasn't touched.
+      void
+      generateForceSurface(const std::string& plan_id, IMC::PlanSpecification& result)
+      {
+        IMC::MessageList<IMC::Maneuver> maneuvers;
+
+        double lat, lon, depth;
+        getCurrentPosition(&lat, &lon, &depth);
+
+        IMC::Loiter* loiter = new IMC::Loiter();
+        loiter->lat = lat;
+        loiter->lon = lon;
+        loiter->z = 0.0f;
+        loiter->z_units = IMC::Z_DEPTH;
+        loiter->type = IMC::Loiter::LT_CIRCULAR;
+        loiter->direction = IMC::Loiter::LD_CCLOCKW;
+        loiter->duration = m_args.dive_time;
+        loiter->speed = m_args.max_rpms;
+        loiter->speed_units = IMC::SUNITS_RPM;
+        loiter->radius = m_args.radius;
+        maneuvers.push_back(*loiter);
+        delete loiter;
+
+        sequentialPlan(plan_id, &maneuvers, result);
+      }
+
+      //! This method generates a yoyo survey.
+      //! @param[in] plan_id the string to be parsed (command).
+      //! @param[in] params a tuple list with parameters to be used in the generation.
+      //! @param[out] result where to store the resulting plan specification.
+      //! @returns true if a plan was actually generated or false if result wasn't touched.
+      void
+      generateYoYo(const std::string& plan_id, TupleList& params, IMC::PlanSpecification& result)
+      {
+        IMC::MessageList<IMC::Maneuver> maneuvers;
+
+        double clat = Angles::radians(params.get("lat", 0.0));
+        double clon = Angles::radians(params.get("lon", 0.0));
+        double maxdepth = params.get("maxdepth", 4.0);
+        double mindepth = params.get("mindepth", 1.0);
+        double vn = params.get("vn", 0.0);
+        double ve = params.get("ve", 0.0);
+        double size = params.get("size", 50.0);
+        double speed = params.get("speed", 1.1);
+        double rot = params.get("rot", 0.0);
+        double popup = params.get("popup", 30);
+        double pitch = params.get("pitch", 15);
+        double radius = std::sqrt((size * size) /2);
+
+        double curlat, curlon, curdepth;
+        getCurrentPosition(&curlat, &curlon, &curdepth);
+
+        // if coordinates are the origin, then use current vehicle position.
+        if (clat == 0 && clon == 0)
+        {
+          clat = curlat;
+          clon = curlon;
+        }
+
+        for (int i = 0; i < 5; i++)
+        {
+          double time = i * size * speed;
+          double ang = Angles::radians(45.0 + 90 * i + rot);
+          double lat = clat;
+          double lon = clon;
+          if (vn == 0 && ve == 0)
+            WGS84::displace(std::sin(ang) * radius, std::cos(ang) * radius, &lat, &lon);
+          else
+            WGS84::displace(vn * time, ve * time, &lat, &lon);
+
+          // first point is a standard goto.
+          if (i == 0)
+          {
+            IMC::Goto* first = new IMC::Goto();
+            first->lat = lat;
+            first->lon = lon;
+            first->z = mindepth;
+            first->z_units = IMC::Z_DEPTH;
+            first->speed_units = IMC::SUNITS_METERS_PS;
+            first->speed = speed;
+            maneuvers.push_back(*first);
+            delete first;
+          }
+          else
+          {
+            IMC::YoYo * yoyo = new IMC::YoYo();
+            yoyo->lat = lat;
+            yoyo->lon = lon;
+            yoyo->z = (mindepth + maxdepth) / 2;
+            yoyo->z_units = IMC::Z_DEPTH;
+            yoyo->speed = speed;
+            yoyo->speed_units = IMC::SUNITS_METERS_PS;
+            yoyo->amplitude = (maxdepth - mindepth) / 2;
+            yoyo->pitch = Angles::radians(pitch);
+            maneuvers.push_back(*yoyo);
+            delete yoyo;
+          }
+
+          // add popups.
+          if (popup > 0)
+          {
+            IMC::PopUp * pop = new IMC::PopUp();
+            pop->lat = lat;
+            pop->lon = lon;
+            pop->radius = c_min_radius;
+            pop->z = 0;
+            pop->z_units = IMC::Z_DEPTH;
+            pop->duration = (int) popup;
+            pop->speed = speed;
+            pop->speed_units = IMC::SUNITS_METERS_PS;
+            pop->flags = IMC::PopUp::FLG_CURR_POS | IMC::PopUp::FLG_WAIT_AT_SURFACE;
+            maneuvers.push_back(*pop);
+            delete pop;
+          }
+        }
+        sequentialPlan(plan_id, &maneuvers, result);
+      }
+
+      //! This method generates a dislodge.
+      //! @param[in] plan_id the string to be parsed (command).
+      //! @param[in] params a tuple list with parameters to be used in the generation.
+      //! @param[out] result where to store the resulting plan specification.
+      //! @returns true if a plan was actually generated or false if result wasn't touched.
+      void
+      generateDislodge(const std::string& plan_id, TupleList& params, IMC::PlanSpecification& result)
+      {
+        IMC::MessageList<IMC::Maneuver> maneuvers;
+
+        IMC::Dislodge* dislodge = new IMC::Dislodge();
+        dislodge->rpm = params.get("rpm", m_args.max_rpms);
+        dislodge->direction = IMC::Dislodge::DIR_AUTO;
+        maneuvers.push_back(*dislodge);
+        delete dislodge;
+
+        sequentialPlan(plan_id, &maneuvers, result);
+      }
+
+      void
+      onMain() override
+      {
+        // Generate plans at boot
+        if (!m_args.generate_at_boot.empty())
+        {
+          IMC::PlanGeneration pg;
+          pg.cmd = IMC::PlanGeneration::CMD_GENERATE;
+          pg.op = IMC::PlanGeneration::OP_REQUEST;
+
+          for (unsigned i = 0; i < m_args.generate_at_boot.size(); i++)
+          {
+            std::vector<std::string> lst;
+            Utils::String::split(m_args.generate_at_boot[i], ":", lst);
+
+            if (lst.size())
+            {
+              pg.plan_id = lst[0];
+              if (lst.size() >= 2)
+                pg.params = lst[1];
+
+              dispatch(pg, DF_LOOP_BACK);
+            }
+          }
+        }
+
+        while (!stopping())
+        {
+          waitForMessages(1.0);
+        }
       }
     };
   }

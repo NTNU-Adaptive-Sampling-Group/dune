@@ -1,5 +1,5 @@
 //***************************************************************************
-// Copyright 2007-2021 Universidade do Porto - Faculdade de Engenharia      *
+// Copyright 2007-2016 Universidade do Porto - Faculdade de Engenharia      *
 // Laboratório de Sistemas e Tecnologia Subaquática (LSTS)                  *
 //***************************************************************************
 // This file is part of DUNE: Unified Navigation Environment.               *
@@ -8,20 +8,18 @@
 // Licencees holding valid commercial DUNE licences may use this file in    *
 // accordance with the commercial licence agreement provided with the       *
 // Software or, alternatively, in accordance with the terms contained in a  *
-// written agreement between you and Faculdade de Engenharia da             *
-// Universidade do Porto. For licensing terms, conditions, and further      *
-// information contact lsts@fe.up.pt.                                       *
+// written agreement between you and Universidade do Porto. For licensing   *
+// terms, conditions, and further information contact lsts@fe.up.pt.        *
 //                                                                          *
-// Modified European Union Public Licence - EUPL v.1.1 Usage                *
-// Alternatively, this file may be used under the terms of the Modified     *
-// EUPL, Version 1.1 only (the "Licence"), appearing in the file LICENCE.md *
+// European Union Public Licence - EUPL v.1.1 Usage                         *
+// Alternatively, this file may be used under the terms of the EUPL,        *
+// Version 1.1 only (the "Licence"), appearing in the file LICENCE.md       *
 // included in the packaging of this file. You may not use this work        *
 // except in compliance with the Licence. Unless required by applicable     *
 // law or agreed to in writing, software distributed under the Licence is   *
 // distributed on an "AS IS" basis, WITHOUT WARRANTIES OR CONDITIONS OF     *
 // ANY KIND, either express or implied. See the Licence for the specific    *
 // language governing permissions and limitations at                        *
-// https://github.com/LSTS/dune/blob/master/LICENCE.md and                  *
 // http://ec.europa.eu/idabc/eupl.html.                                     *
 //***************************************************************************
 // Author: Pedro Calado                                                     *
@@ -65,7 +63,7 @@ namespace Plan
       };
 
       //! Default constructor.
-      Calibration(void)
+      Calibration()
       {
         clear();
       }
@@ -85,7 +83,7 @@ namespace Plan
 
       //! Clear calibration
       void
-      clear(void)
+      clear()
       {
         m_state = CS_NONE;
         m_time = -1.0;
@@ -93,7 +91,7 @@ namespace Plan
 
       //! Start calibration
       void
-      start(void)
+      start()
       {
         if (m_time >= 0.0)
         {
@@ -108,7 +106,7 @@ namespace Plan
 
       //! Stop calibration
       void
-      stop(void)
+      stop()
       {
         m_state = CS_DONE;
       }
@@ -142,7 +140,7 @@ namespace Plan
       //! Get remaining time in calibration
       //! @return remaining time
       float
-      getRemaining(void) const
+      getRemaining() const
       {
         return m_timer.getRemaining();
       }
@@ -150,7 +148,7 @@ namespace Plan
       //! Get elapsed calibration time
       //! @return elapsed calibration time
       float
-      getElapsedTime(void) const
+      getElapsedTime() const
       {
         return m_time - m_timer.getRemaining();
       }
@@ -158,7 +156,7 @@ namespace Plan
       //! Check if calibration is in progress
       //! @return true if in progress
       bool
-      inProgress(void) const
+      inProgress() const
       {
         return CS_IN_PROGRESS == m_state;
       }
@@ -166,7 +164,7 @@ namespace Plan
       //! Check if calibration has not yet started
       //! @return true if it has not yet started
       bool
-      notStarted(void) const
+      notStarted() const
       {
         return CS_NOT_STARTED == m_state;
       }
@@ -174,7 +172,7 @@ namespace Plan
       //! Calibration is done
       //! @return true if calibration is done
       bool
-      isDone(void) const
+      isDone() const
       {
         return CS_DONE == m_state;
       }
@@ -182,7 +180,7 @@ namespace Plan
       //! Calibration has failed
       //! @return true if calibration has failed
       bool
-      hasFailed(void) const
+      hasFailed() const
       {
         return CS_FAILED == m_state;
       }
@@ -190,7 +188,7 @@ namespace Plan
       //! Get error message
       //! @return error string message
       const std::string&
-      getInfo(void) const
+      getInfo() const
       {
         return m_info;
       }

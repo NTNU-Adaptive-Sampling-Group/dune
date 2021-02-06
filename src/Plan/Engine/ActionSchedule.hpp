@@ -1,5 +1,5 @@
 //***************************************************************************
-// Copyright 2007-2021 Universidade do Porto - Faculdade de Engenharia      *
+// Copyright 2007-2016 Universidade do Porto - Faculdade de Engenharia      *
 // Laboratório de Sistemas e Tecnologia Subaquática (LSTS)                  *
 //***************************************************************************
 // This file is part of DUNE: Unified Navigation Environment.               *
@@ -8,20 +8,18 @@
 // Licencees holding valid commercial DUNE licences may use this file in    *
 // accordance with the commercial licence agreement provided with the       *
 // Software or, alternatively, in accordance with the terms contained in a  *
-// written agreement between you and Faculdade de Engenharia da             *
-// Universidade do Porto. For licensing terms, conditions, and further      *
-// information contact lsts@fe.up.pt.                                       *
+// written agreement between you and Universidade do Porto. For licensing   *
+// terms, conditions, and further information contact lsts@fe.up.pt.        *
 //                                                                          *
-// Modified European Union Public Licence - EUPL v.1.1 Usage                *
-// Alternatively, this file may be used under the terms of the Modified     *
-// EUPL, Version 1.1 only (the "Licence"), appearing in the file LICENCE.md *
+// European Union Public Licence - EUPL v.1.1 Usage                         *
+// Alternatively, this file may be used under the terms of the EUPL,        *
+// Version 1.1 only (the "Licence"), appearing in the file LICENCE.md       *
 // included in the packaging of this file. You may not use this work        *
 // except in compliance with the Licence. Unless required by applicable     *
 // law or agreed to in writing, software distributed under the Licence is   *
 // distributed on an "AS IS" basis, WITHOUT WARRANTIES OR CONDITIONS OF     *
 // ANY KIND, either express or implied. See the Licence for the specific    *
 // language governing permissions and limitations at                        *
-// https://github.com/LSTS/dune/blob/master/LICENCE.md and                  *
 // http://ec.europa.eu/idabc/eupl.html.                                     *
 //***************************************************************************
 // Author: Pedro Calado                                                     *
@@ -31,11 +29,12 @@
 #define PLAN_ENGINE_ACTION_SCHEDULE_HPP_INCLUDED_
 
 // ISO C++ 98 headers.
-#include <string>
-#include <vector>
-#include <stack>
+#include <iterator>
 #include <map>
+#include <vector>
 #include <set>
+#include <stack>
+#include <string>
 #include <utility>
 
 // DUNE headers.
@@ -89,7 +88,7 @@ namespace Plan
 
       //! Flush all remaining timed actions in the schedule
       void
-      flushTimed(void);
+      flushTimed();
 
       //! The plan has started
       //! @param[out] affected vector of entities that will be (de)activated during the plan
@@ -114,7 +113,7 @@ namespace Plan
       //! Get the time of the earliest scheduled action
       //! @return time of the earliest scheduled action
       inline float
-      getEarliestSchedule(void) const
+      getEarliestSchedule() const
       {
         return m_earliest;
       }
@@ -129,12 +128,12 @@ namespace Plan
       //! Check if we are still waiting for a device in calibration process
       //! @return true if we are still waiting
       bool
-      waitingForDevice(void);
+      waitingForDevice();
 
       //! Compute a shorter time for calibration
       //! @return time left for calibration according to devices to activate
       float
-      calibTimeLeft(void);
+      calibTimeLeft();
 
       //! Fill the object component active time
       //! @param[in] nodes vector of sequenced plan maneuvers
@@ -169,7 +168,7 @@ namespace Plan
       };
 
       //! Stack of timed actions
-      typedef std::stack<TimedAction> TimedStack;
+      using TimedStack = std::stack<TimedAction>;
 
       //! Actions that should be fired on plan and maneuver start or end
       struct EventActions
@@ -181,12 +180,12 @@ namespace Plan
       };
 
       //! Map to address event based actions
-      typedef std::map<std::string, EventActions> EventMap;
+      using EventMap = std::map<std::string, EventActions>;
 
       //! Map of entity names to entity activation states
-      typedef std::map<std::string, uint8_t> EASMap;
+      using EASMap = std::map<std::string, uint8_t>;
       //! Pair for EASMap
-      typedef std::pair<std::string, uint8_t> EASPair;
+      using EASPair = std::pair<std::string, uint8_t>;
 
       //! Parse Start actions
       //! @param[in] actions message list of actions to parse
@@ -276,7 +275,7 @@ namespace Plan
 
       //! Schedule timed actions
       void
-      scheduleTimed(void);
+      scheduleTimed();
 
       //! Dispatch actions
       //! @param[in] msg SetEntityParameters to dispatch
@@ -298,11 +297,15 @@ namespace Plan
       //! Find the stack with the next scheduled action
       //! @return iterator to the stack with the next scheduled action
       std::map<std::string, TimedStack>::iterator
-      nextSchedule(void);
+      nextSchedule();
 
       //! Printed timed actions
       void
-      printTimed(void);
+      printTimed();
+
+      //! Print missing entity labels
+      void
+      printEntityLabels();
 
       //! Map of entity labels to TimedStack's
       //! This means we'll have one stack per component
@@ -317,6 +320,8 @@ namespace Plan
       Tasks::Task* m_task;
       //! Pointer to map of component names to EntityInfo
       const std::map<std::string, IMC::EntityInfo>* m_cinfo;
+      //! List of entities not found.
+      std::set<std::string> m_ents_nf;
       //! Time of earliest scheduled actions
       float m_earliest;
       //! Set of entities that will be changed during plan and its activation state

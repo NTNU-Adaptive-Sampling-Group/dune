@@ -1,5 +1,5 @@
 //***************************************************************************
-// Copyright 2007-2021 Universidade do Porto - Faculdade de Engenharia      *
+// Copyright 2007-2016 Universidade do Porto - Faculdade de Engenharia      *
 // Laboratório de Sistemas e Tecnologia Subaquática (LSTS)                  *
 //***************************************************************************
 // This file is part of DUNE: Unified Navigation Environment.               *
@@ -8,20 +8,18 @@
 // Licencees holding valid commercial DUNE licences may use this file in    *
 // accordance with the commercial licence agreement provided with the       *
 // Software or, alternatively, in accordance with the terms contained in a  *
-// written agreement between you and Faculdade de Engenharia da             *
-// Universidade do Porto. For licensing terms, conditions, and further      *
-// information contact lsts@fe.up.pt.                                       *
+// written agreement between you and Universidade do Porto. For licensing   *
+// terms, conditions, and further information contact lsts@fe.up.pt.        *
 //                                                                          *
-// Modified European Union Public Licence - EUPL v.1.1 Usage                *
-// Alternatively, this file may be used under the terms of the Modified     *
-// EUPL, Version 1.1 only (the "Licence"), appearing in the file LICENCE.md *
+// European Union Public Licence - EUPL v.1.1 Usage                         *
+// Alternatively, this file may be used under the terms of the EUPL,        *
+// Version 1.1 only (the "Licence"), appearing in the file LICENCE.md       *
 // included in the packaging of this file. You may not use this work        *
 // except in compliance with the Licence. Unless required by applicable     *
 // law or agreed to in writing, software distributed under the Licence is   *
 // distributed on an "AS IS" basis, WITHOUT WARRANTIES OR CONDITIONS OF     *
 // ANY KIND, either express or implied. See the Licence for the specific    *
 // language governing permissions and limitations at                        *
-// https://github.com/LSTS/dune/blob/master/LICENCE.md and                  *
 // http://ec.europa.eu/idabc/eupl.html.                                     *
 //***************************************************************************
 // Author: Pedro Calado                                                     *
@@ -43,6 +41,7 @@ namespace Plan
     {
       // Set execution duration
       m_execution_duration = tline.getExecutionDuration();
+      m_ents_nf.clear();
 
       // start by adding "start" plan actions
       parseStartActions(spec->start_actions, &m_plan_actions, m_execution_duration);
@@ -65,6 +64,7 @@ namespace Plan
       }
 
       parseEndActions(spec->end_actions, &m_plan_actions, 0.0);
+      printEntityLabels();
 
       // Create a proper schedule from the unscheduled set of actions
       scheduleTimed();
@@ -85,6 +85,7 @@ namespace Plan
       m_cinfo(&cinfo)
     {
       m_execution_duration = -1.0;
+      m_ents_nf.clear();
 
       // start by adding "start" plan actions
       parseStartActions(spec->start_actions, &m_plan_actions, m_execution_duration);
@@ -104,6 +105,7 @@ namespace Plan
       }
 
       parseEndActions(spec->end_actions, &m_plan_actions, 0.0);
+      printEntityLabels();
 
       m_earliest = 0.0;
     }
@@ -116,7 +118,7 @@ namespace Plan
 
       m_time_left = time_left;
 
-      while (1)
+      while (true)
       {
         std::map<std::string, TimedStack>::iterator next;
         next = nextSchedule();
@@ -142,9 +144,9 @@ namespace Plan
     }
 
     void
-    ActionSchedule::flushTimed(void)
+    ActionSchedule::flushTimed()
     {
-      while (1)
+      while (true)
       {
         std::map<std::string, TimedStack>::iterator next;
         next = nextSchedule();
@@ -272,7 +274,7 @@ namespace Plan
     }
 
     bool
-    ActionSchedule::waitingForDevice(void)
+    ActionSchedule::waitingForDevice()
     {
       // if there are any requests hanging, then we're waiting
       if (!m_reqs.empty())
@@ -291,7 +293,7 @@ namespace Plan
     }
 
     float
-    ActionSchedule::calibTimeLeft(void)
+    ActionSchedule::calibTimeLeft()
     {
       if (!m_reqs.empty())
         return -1.0;
@@ -444,7 +446,6 @@ namespace Plan
     }
 
     // Private
-
     void
     ActionSchedule::parseActions(const IMC::MessageList<IMC::Message>& actions,
                                  EventActions* event_actions, float eta, bool start)
@@ -470,7 +471,7 @@ namespace Plan
         test = m_cinfo->find(sep->name);
         if (test == m_cinfo->end())
         {
-          m_task->war(DTR("schedule: entity label %s not found"), sep->name.c_str());
+          m_ents_nf.insert(sep->name);
           continue;
         }
 
@@ -631,7 +632,7 @@ namespace Plan
     }
 
     void
-    ActionSchedule::scheduleTimed(void)
+    ActionSchedule::scheduleTimed()
     {
       if (m_unsched.empty())
         return;
@@ -704,7 +705,7 @@ namespace Plan
     }
 
     std::map<std::string, ActionSchedule::TimedStack>::iterator
-    ActionSchedule::nextSchedule(void)
+    ActionSchedule::nextSchedule()
     {
       if (!m_timed.size())
         return m_timed.end();
@@ -728,7 +729,7 @@ namespace Plan
     }
 
     void
-    ActionSchedule::printTimed(void)
+    ActionSchedule::printTimed()
     {
       std::map<std::string, TimedStack> clone = m_timed;
 
@@ -744,6 +745,19 @@ namespace Plan
         }
         m_task->war(DTR("END %s ---"), itr->first.c_str());
       }
+    }
+
+    void
+    ActionSchedule::printEntityLabels()
+    {
+      if (m_ents_nf.size() == 0)
+        return;
+
+      std::ostringstream ss;
+      std::copy(m_ents_nf.begin(), m_ents_nf.end(), std::ostream_iterator<std::string>(ss, ", "));
+      std::string str = ss.str();
+      str = str.substr(0, str.size() - 2);
+      m_task->war(DTR("schedule: entity labels not found: %s"), str.c_str());
     }
   }
 }
