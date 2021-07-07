@@ -62,6 +62,8 @@ namespace Simulators
       double a_val;
       double b_val;
       double c_val;
+
+      double depth_val;
       //inside outside plume
       bool is_inside;
 
@@ -133,6 +135,9 @@ namespace Simulators
 
         param("c",m_args.c_val)
         .defaultValue("0.0");
+
+        param("Depth",m_args.depth_val)
+        .defaultValue("4.0");
 
         param("is the vehicle starting inside the plume?",m_args.is_inside)
         .defaultValue("true");
@@ -231,7 +236,7 @@ namespace Simulators
         double pressure = (m_depth.value * c_gravity * c_seawater_density + c_sea_level_pressure) / c_pascal_per_bar;
 
         m_salinity.setTimeStamp(m_temp.getTimeStamp());
-        m_salinity.value = UNESCO1983::computeSalinity(m_cond.value, pressure, m_temp.value);
+        m_salinity.value = 35.0 * (1.0/(1+exp(-(m_depth.value -m_args.depth_val))))*((m_args.sig_sol+1.0)/2.0) + 35.0*(1.0-((m_args.sig_sol+1.0)/2.0));  //UNESCO1983::computeSalinity(m_cond.value, pressure, m_temp.value);
 
         m_sspeed.setTimeStamp(m_temp.getTimeStamp());
         m_sspeed.value = (m_salinity.value < 0.0) ? -1.0 : UNESCO1983::computeSoundSpeed(m_salinity.value, pressure, m_temp.value);
